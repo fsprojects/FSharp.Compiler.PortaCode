@@ -16,7 +16,7 @@ module Versions =
 [<TestClass>]
 type TestClass () =
 
-    let createNetStandardProjectArgs proj extras = 
+    static let createNetStandardProjectArgs proj extras = 
         """-o:PROJ.dll
 -g
 --debug:portable
@@ -172,7 +172,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    let GeneralTestCase name code refs =
+    static let GeneralTestCase name code refs =
         let directory = __SOURCE_DIRECTORY__ + "/data"
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
@@ -183,7 +183,9 @@ module TestCode
 
         Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine( [| "dummy.exe"; "--eval"; "@" + name + ".args.txt" |]))
 
-    let SimpleTestCase name code = GeneralTestCase name code ""
+    static let SimpleTestCase name code = GeneralTestCase name code ""
+
+    static member CreateGeneralTestCase name code refs = GeneralTestCase name code refs
 
     [<Test>]
     member this.TestTuples () =
