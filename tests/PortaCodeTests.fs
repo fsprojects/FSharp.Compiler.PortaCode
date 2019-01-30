@@ -13,10 +13,10 @@ module Versions =
     let SystemReflectionEmitLightweight = "4.3.0"
     let NewtonsoftJson = "11.0.2"
 
-[<TestClass>]
-type TestClass () =
-
-    static let createNetStandardProjectArgs proj extras = 
+[<AutoOpen>]
+module TestHelpers = 
+    /// Helper used by Fabulous.Cli testing
+    let createNetStandardProjectArgs proj extras = 
         """-o:PROJ.dll
 -g
 --debug:portable
@@ -172,7 +172,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    static let GeneralTestCase name code refs =
+    let GeneralTestCase name code refs =
         let directory = __SOURCE_DIRECTORY__ + "/data"
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
@@ -183,9 +183,10 @@ module TestCode
 
         Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine( [| "dummy.exe"; "--eval"; "@" + name + ".args.txt" |]))
 
-    static let SimpleTestCase name code = GeneralTestCase name code ""
+    let SimpleTestCase name code = GeneralTestCase name code ""
 
-    static member CreateGeneralTestCase name code refs = GeneralTestCase name code refs
+[<TestClass>]
+type TestClass () =
 
     [<Test>]
     member this.TestTuples () =
