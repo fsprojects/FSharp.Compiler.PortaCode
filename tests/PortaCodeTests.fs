@@ -1,4 +1,4 @@
-namespace FSharpDaemon.Tests
+namespace FSharp.Compiler.PortaCode.Tests
 
 open System
 open System.IO
