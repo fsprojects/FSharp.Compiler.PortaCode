@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>netcoreapp2.1</TargetFramework>
+        <DefineConstants>$(DefineConstants);NETSTANDARD2_0</DefineConstants>
+        <PackAsTool>True</PackAsTool>
+        <ToolCommandName>fslive</ToolCommandName>
+    </PropertyGroup>
+    <PropertyGroup>
+        <PackageId>fslive-cli</PackageId>
+        <Description>.NET Core Global Tool for FsLive - allows to send files to Fabulous.LiveUpdate and more</Description>
+        <PackageTags>Tool;CLI</PackageTags>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Include="fslive.fs" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\src\FSharp.Compiler.PortaCode.fsproj" />
+
+        <!-- References used indirectly by FCS when compiling tests -->
+        <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
+        <PackageReference Include="NETStandard.Library" Version="2.0.3"  />
+        <PackageReference Include="System.Reflection.Emit.ILGeneration"  Version="4.3.0" />
+        <PackageReference Include="System.Reflection.Emit.Lightweight"  Version="4.3.0" />
+    </ItemGroup>
+</Project>
