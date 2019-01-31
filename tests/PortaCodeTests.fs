@@ -170,8 +170,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    let GeneralTestCase name code refs =
-        let directory = __SOURCE_DIRECTORY__ + "/data"
+    let GeneralTestCase directory name code refs =
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
         File.WriteAllText (name + ".fs", """
@@ -181,7 +180,9 @@ module TestCode
 
         Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine( [| "dummy.exe"; "--eval"; "@" + name + ".args.txt" |]))
 
-    let SimpleTestCase name code = GeneralTestCase name code ""
+    let internal SimpleTestCase name code = 
+        let directory = __SOURCE_DIRECTORY__ + "/data"
+        GeneralTestCase name code "" // no extra refs
 
 [<TestClass>]
 type TestClass () =
