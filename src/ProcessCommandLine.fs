@@ -20,6 +20,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable eval = false
     let mutable watch = false
+    let mutable writeinfo = false
     let mutable webhook = None
     let mutable otherFlags = []
     let args = 
@@ -38,6 +39,7 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif arg = "--watch" then watch <- true
                 elif arg = "--eval" then eval <- true
+                elif arg = "--writeinfo" then writeinfo <- true
                 elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
                 else yield arg  |]
 
@@ -119,7 +121,7 @@ let ProcessCommandLine (argv: string[]) =
 
     let convFile (i: FSharpImplementationFileContents) =         
         //(i.QualifiedName, i.FileName
-        { Code = convDecls i.Declarations }
+        i.FileName, { Code = convDecls i.Declarations }
 
     let checkFiles files =             
         let rec loop rest acc = 
@@ -144,16 +146,50 @@ let ProcessCommandLine (argv: string[]) =
         let json = Newtonsoft.Json.JsonConvert.SerializeObject(data)
         json
 
-    let sendToWebHook (hook: string) sourceFile fileContents = 
+    let sendToWebHook (hook: string) fileContents = 
         try 
             let json = jsonFiles (Array.ofList fileContents)
-            printfn "fscd: GOT JSON for %s, length = %d" sourceFile json.Length
+            printfn "fscd: GOT JSON, length = %d" json.Length
             use webClient = new WebClient(Encoding = Encoding.UTF8)
             printfn "fscd: SENDING TO WEBHOOK... " // : <<<%s>>>... --> %s" json.[0 .. min (json.Length - 1) 100] hook
             let resp = webClient.UploadString (hook,"Put",json)
             printfn "fscd: RESP FROM WEBHOOK: %s" resp
         with err -> 
             printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
+
+    /// Write an info file containing extra information to make available to F# tooling
+    let writeInfoFile tooltips sourceFile errors = 
+        let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
+        let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
+        let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
+        printfn "writing info file %s..." infoFile 
+        try 
+            let lines = 
+                [| for (x: DLocalDef, value: obj) in tooltips do
+                        let range = x.Range
+                        // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+                        match value with 
+                        | null -> ()
+                        | value -> 
+                            printfn "value %s " (value.GetType().Name) 
+                            if value.GetType().Name = "DT`1" then 
+                                let msg = sprintf "%A" (value.ToString()) 
+                                let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\t%s" range.StartLine range.StartColumn range.EndLine range.EndColumn msg
+                                yield line
+                   for (exn:exn, rangeStack) in errors do 
+                        if List.length rangeStack > 0 then 
+                            let range = List.last rangeStack 
+                            let message = "Live check failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
+                            let msg = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
+                            yield msg |]
+
+            if not (Directory.Exists infoDir) then 
+                Directory.CreateDirectory(infoDir) |> ignore
+
+            File.WriteAllLines(lockFile, [ sprintf "locked at %A by %s" System.DateTime.Now __SOURCE_FILE__ ])
+            File.WriteAllLines(infoFile, lines)
+        finally
+            try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
 
     let evaluateDecls fileContents = 
         let assemblyTable = 
@@ -173,37 +209,64 @@ let ProcessCommandLine (argv: string[]) =
             | true, res -> res
             | _ -> Reflection.Assembly.Load(nm)
                                         
-        let ctxt = EvalContext(assemblyResolver)
+        let tooltips = ResizeArray()
+        let sink =
+            if writeinfo then 
+                { new Sink with 
+                     member __.BindLocal(x: DLocalDef, value: obj) = tooltips.Add ((x, value)) }
+                |> Some
+            else  
+                None
+
+        let ctxt = EvalContext(assemblyResolver, ?sink=sink)
         let fileConvContents = [| for i in fileContents -> convFile i |]
-        for ds in fileConvContents do 
-                ctxt.AddDecls(ds.Code)
-        for ds in fileConvContents do 
+
+        for (_, contents) in fileConvContents do 
+            ctxt.AddDecls(contents.Code)
+
+        for (sourceFile, ds) in fileConvContents do 
             printfn "evaluating decls.... " 
-            try 
-               ctxt.EvalDecls (envEmpty, ds.Code)
-            with e -> printfn "problem! %A" e.Message
+            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code)
+
+            if writeinfo then 
+                writeInfoFile (tooltips.ToArray()) sourceFile errors
+
             printfn "...evaluated decls" 
 
-    let changed sourceFile (ev: FileSystemEventArgs) =
+    let changed why _ =
         try 
-            printfn "fscd: CHANGE DETECTED for %s, COMPILING...." sourceFile
+            printfn "fscd: CHANGE DETECTED (%s), COMPILING...." why
 
             match checkFiles options.SourceFiles with 
             | Result.Error () -> ()
-            | Result.Ok fileContents -> 
+            | Result.Ok allFileContents -> 
 
             match webhook with 
-            | Some hook -> sendToWebHook hook sourceFile fileContents
+            | Some hook -> sendToWebHook hook allFileContents
             | None -> 
 
             if eval then 
-                printfn "fscd: CHANGE DETECTED for %s, EVALUATING...." sourceFile
-                evaluateDecls fileContents 
+                printfn "fscd: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
+                evaluateDecls allFileContents 
 
+            // The default is to dump
+            if not eval && webhook.IsNone then 
+                let fileConvContents = jsonFiles (Array.ofList allFileContents)
+
+                printfn "%A" fileConvContents
         with err -> 
             printfn "fscd: exception: %A" (err.ToString())
 
+    for o in options.OtherOptions do 
+        printfn "compiling, option %s" o
+
     if watch then 
+        // Send an immediate changed() event
+        if webhook.IsNone then 
+            printfn "Sending initial changes... " 
+            for sourceFile in options.SourceFiles do
+                changed "initial" ()
+
         let watchers = 
             [ for sourceFile in options.SourceFiles do
                 let path = Path.GetDirectoryName(sourceFile)
@@ -211,40 +274,21 @@ let ProcessCommandLine (argv: string[]) =
                 printfn "fscd: WATCHING %s in %s" fileName path 
                 let watcher = new FileSystemWatcher(path, fileName)
                 watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-                watcher.Changed.Add (changed sourceFile)
-                watcher.Created.Add (changed sourceFile)
-                watcher.Deleted.Add (changed sourceFile)
-                watcher.Renamed.Add (changed sourceFile)
+                watcher.Changed.Add (changed "Changed")
+                watcher.Created.Add (changed "Created")
+                watcher.Deleted.Add (changed "Deleted")
+                watcher.Renamed.Add (changed "Renamed")
                 yield watcher ]
 
         for watcher in watchers do
             watcher.EnableRaisingEvents <- true
 
-        printfn "Waiting for changes..." 
+        printfn "Waiting for changes... press any key to exit" 
         System.Console.ReadLine() |> ignore
         for watcher in watchers do
-            watcher.EnableRaisingEvents <- true
+            watcher.EnableRaisingEvents <- false
 
     else
-        //printfn "compiling, options = %A" options
-        for o in options.OtherOptions do 
-            printfn "compiling, option %s" o
-        let fileContents = 
-            [| for sourceFile in options.SourceFiles do
-                match checkFile 0 sourceFile with 
-                | Result.Error _ -> failwith "errors"
-                | Result.Ok iopt -> 
-                    match iopt with 
-                    | None -> () // signature file
-                    | Some i -> yield i |]
-
-        printfn "#ImplementationFiles  = %d" fileContents.Length
-
-        if eval then 
-            evaluateDecls fileContents 
-        else
-            let fileConvContents = jsonFiles fileContents
-
-            printfn "%A" fileConvContents
+        changed "once" ()
     0
 

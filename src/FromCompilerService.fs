@@ -4,6 +4,7 @@ module FSharp.Compiler.PortaCode.FromCompilerService
 open FSharp.Compiler.PortaCode.CodeModel
 open System.Collections.Generic
 open Microsoft.FSharp.Compiler.SourceCodeServices
+open Microsoft.FSharp.Compiler.Range
 
 let map2 f g (a,b) = (f a, g b)
 
@@ -107,8 +108,11 @@ and convUnionCaseField (ucase: FSharpUnionCase) (field: FSharpField) : DFieldRef
     | Some index -> DFieldRef (index, field.Name)
     | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
 
-and convLocalDef (memb: FSharpMemberOrFunctionOrValue) : DLocalDef = 
-    { Name = memb.CompiledName; IsMutable = memb.IsMutable; Type = convType memb.FullType }
+and convRange (range: range) : DRange = 
+    { File = range.FileName; StartLine = range.StartLine; StartColumn = range.StartColumn; EndLine = range.EndLine; EndColumn = range.EndColumn }
+
+and convLocalDef (value: FSharpMemberOrFunctionOrValue) : DLocalDef = 
+    { Name = value.CompiledName; IsMutable = value.IsMutable; Type = convType value.FullType; Range = convRange value.DeclarationLocation; IsCompilerGenerated=value.IsCompilerGenerated }
 
 and convLocalRef (value: FSharpMemberOrFunctionOrValue) : DLocalRef = 
     DLocalRef (value.CompiledName, (value.IsMemberThisValue || value.IsConstructorThisValue || value.IsBaseValue), value.IsMutable)
@@ -120,7 +124,8 @@ and convMemberDef (memb: FSharpMemberOrFunctionOrValue) : DMemberDef =
       GenericParameters = convGenericParamDefs memb.GenericParameters
       Parameters = convParamDefs memb
       ReturnType = convReturnType memb
-      IsInstance = memb.IsInstanceMemberInCompiledCode }
+      IsInstance = memb.IsInstanceMemberInCompiledCode
+      Range = convRange memb.DeclarationLocation}
 
 and convMemberRef (memb: FSharpMemberOrFunctionOrValue) = 
     if not (memb.IsMember || memb.IsModuleValueOrMember) then failwith "can't convert non-member ref"
@@ -166,15 +171,15 @@ and convParamDefs (memb: FSharpMemberOrFunctionOrValue) =
         | [| p |] when p.Type.HasTypeDefinition && p.Type.TypeDefinition.LogicalName = "unit" -> [| |]
         | ps -> ps
     let parametersR = 
-        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.Type })
+        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.Type; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
     if memb.IsInstanceMember && not memb.IsInstanceMemberInCompiledCode then 
         if memb.IsExtensionMember then 
             let instanceTypeR = DNamedType (convEntityRef memb.ApparentEnclosingEntity, [| |])
-            let thisParam = { Name = "$this"; IsMutable = false; Type = instanceTypeR }
+            let thisParam = { Name = "$this"; IsMutable = false; Type = instanceTypeR; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
             Array.append [| thisParam |] parametersR
         else
             let instanceType = memb.FullType.GenericArguments.[0]
-            let thisParam = { Name = "$this"; IsMutable = false; Type = convType instanceType }
+            let thisParam = { Name = "$this"; IsMutable = false; Type = convType instanceType; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
             Array.append [| thisParam |] parametersR
     else
         parametersR
@@ -185,7 +190,7 @@ and convParamDefs2 (parameters: FSharpMemberOrFunctionOrValue list list) =
         match parameters |> Seq.concat |> Seq.toArray with 
         | [| p |] when p.FullType.HasTypeDefinition && p.FullType.TypeDefinition.LogicalName = "unit" -> [| |]
         | ps -> ps
-    parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.FullType })
+    parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.FullType; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
 
 and convReturnType (memb: FSharpMemberOrFunctionOrValue) = 
     convType memb.ReturnParameter.Type
@@ -196,7 +201,8 @@ and convEntityDef (entity: FSharpEntity) : DEntityDef =
     if entity.IsFSharpAbbreviation then failwith "convEntityDef: can't convert a type abbreviation"
     { Name = entity.QualifiedName
       GenericParameters = convGenericParamDefs entity.GenericParameters 
-      UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) }
+      UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) 
+      Range = convRange entity.DeclarationLocation}
 
 and convEntityRef (entity: FSharpEntity) : DEntityRef = 
     if entity.IsNamespace then failwith "convEntityRef: can't convert a namespace"
@@ -234,7 +240,7 @@ let rec convDecl d =
                let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
                yield DDeclMember (vR, eR)
        | FSharpImplementationFileDeclaration.InitAction(e) -> 
-           yield DDecl.InitAction (convExpr e) |]
+           yield DDecl.InitAction (convExpr e, convRange e.Range) |]
 and convDecls decls = 
     decls |> Array.ofList |> Array.collect convDecl 
 

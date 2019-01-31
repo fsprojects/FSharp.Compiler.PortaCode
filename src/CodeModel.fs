@@ -2,6 +2,12 @@
 
 module FSharp.Compiler.PortaCode.CodeModel
 
+type DRange = 
+   { File: string 
+     StartLine: int
+     StartColumn: int
+     EndLine: int
+     EndColumn: int }
 
 /// A representation of resolved F# expressions that can be serialized
 type DExpr = 
@@ -57,12 +63,12 @@ and DType =
     | DByRefType of DType
     | DVariableType of string
 and DLocalDef = 
-    { Name: string; IsMutable: bool; Type: DType }
+    { Name: string; IsMutable: bool; Type: DType; Range: DRange; IsCompilerGenerated: bool }
 and DMemberDef = 
-    { EnclosingEntity: DEntityRef; Name: string; GenericParameters: DGenericParameterDef[]; IsInstance: bool; Parameters: DLocalDef[]; ReturnType: DType }
+    { EnclosingEntity: DEntityRef; Name: string; GenericParameters: DGenericParameterDef[]; IsInstance: bool; Parameters: DLocalDef[]; ReturnType: DType; Range: DRange }
     member x.Ref = DMemberRef (x.EnclosingEntity, x.Name, x.GenericParameters.Length, (x.Parameters |> Array.map (fun p -> p.Type)), x.ReturnType)
 and DGenericParameterDef = { Name: string }
-and DEntityDef = { Name: string; GenericParameters: DGenericParameterDef[]; UnionCases: string[] }
+and DEntityDef = { Name: string; GenericParameters: DGenericParameterDef[]; UnionCases: string[]; Range: DRange }
 and DEntityRef = DEntityRef of string 
 and DMemberRef = DMemberRef of DEntityRef * string * int * DType[] * DType
 and DLocalRef = DLocalRef of name: string * isThisValue: bool * isMutable: bool
@@ -73,7 +79,7 @@ and DObjectExprOverrideDef =  { Name: string; GenericParameters: DGenericParamet
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]
     | DDeclMember of DMemberDef * DExpr
-    | InitAction of DExpr
+    | InitAction of DExpr * DRange
 
 type DFile = 
     { Code: DDecl[] }
