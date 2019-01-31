@@ -68,7 +68,7 @@ let rec convExpr (e:FSharpExpr) : DExpr =
     | BasicPatterns.UnionCaseTest(unionExpr, unionType, unionCase) -> DExpr.UnionCaseTest(convExpr unionExpr, convType unionType, convUnionCase unionCase)
     | BasicPatterns.UnionCaseTag(unionExpr, unionType) -> DExpr.UnionCaseTag(convExpr unionExpr, convType unionType)
     | BasicPatterns.ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> DExpr.ObjectExpr(convType objType, convExpr baseCallExpr, Array.map convObjMemberDef (Array.ofList overrides), Array.map (map2 convType (Array.ofList >> Array.map convObjMemberDef)) (Array.ofList interfaceImplementations))
-    //| BasicPatterns.TraitCall(sourceTypes, traitName, typeArgs, typeInstantiation, argTypes, argExprs) -> DExpr.TraitCall(sourceTypes, traitName, typeArgs, typeInstantiation, argTypes, argExprs)
+    | BasicPatterns.TraitCall(sourceTypes, traitName, memberFlags, typeInstantiation, argTypes, argExprs) -> DExpr.TraitCall(convTypes sourceTypes, traitName, memberFlags.IsInstance, convTypes typeInstantiation, convTypes argTypes, convExprs argExprs)
     | BasicPatterns.ValueSet(valToSet, valueExpr) -> DExpr.ValueSet(convLocalRef valToSet, convExpr valueExpr)
     | BasicPatterns.WhileLoop(guardExpr, bodyExpr) -> DExpr.WhileLoop(convExpr guardExpr, convExpr bodyExpr)
     | BasicPatterns.BaseValue baseType -> DExpr.BaseValue (convType baseType)

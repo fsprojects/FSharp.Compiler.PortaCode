@@ -21,6 +21,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable eval = false
     let mutable watch = false
     let mutable webhook = None
+    let mutable otherFlags = []
     let args = 
         let mutable haveDashes = false
 
@@ -34,6 +35,7 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.EndsWith(".fsproj") then 
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
+                elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif arg = "--watch" then watch <- true
                 elif arg = "--eval" then eval <- true
                 elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
@@ -58,19 +60,38 @@ let ProcessCommandLine (argv: string[]) =
                 let options = { options with SourceFiles = Array.ofList sourceFiles }
                 let sourceFilesSet = Set.ofList sourceFiles
                 let options = { options with OtherOptions = options.OtherOptions |> Array.filter (fun s -> not (sourceFilesSet.Contains(s))) }
-                options
+                Result.Ok options
             | Error err -> 
                 failwithf "Couldn't parse project file: %A" err
             
         | None -> 
-            let sourceFiles, otherFlags = args |> Array.partition (fun arg -> arg.EndsWith(".fs") || arg.EndsWith(".fsi") || arg.EndsWith(".fsx"))
+            let sourceFiles, otherFlags2 = args |> Array.partition (fun arg -> arg.EndsWith(".fs") || arg.EndsWith(".fsi") || arg.EndsWith(".fsx"))
+            let otherFlags = [| yield! otherFlags; yield! otherFlags2 |]
             let sourceFiles = sourceFiles |> Array.map Path.GetFullPath 
-        
             printfn "CurrentDirectory = %s" Environment.CurrentDirectory
-            let options = checker.GetProjectOptionsFromCommandLineArgs("tmp.fsproj", otherFlags)
-            let options = { options with SourceFiles = sourceFiles }
-            options
+        
+            match sourceFiles with 
+            | [| script |] when script.EndsWith(".fsx") ->
+                let text = File.ReadAllText script
+                let options, errors = checker.GetProjectOptionsFromScript(script, text, otherFlags=otherFlags) |> Async.RunSynchronously
+                if errors.Length > 0 then 
+                    for error in errors do 
+                        printfn "%s" (error.ToString())
+                    Result.Error ()
+                else                                
+                    let options = { options with SourceFiles = sourceFiles }
+                    Result.Ok options
+            | _ -> 
+                let options = checker.GetProjectOptionsFromCommandLineArgs("tmp.fsproj", otherFlags)
+                let options = { options with SourceFiles = sourceFiles }
+                Result.Ok options
 
+    match options with 
+    | Result.Error () -> 
+        printfn "fscd: error processing project options or script" 
+        -1
+    | Result.Ok options ->
+    let options = { options with OtherOptions = Array.append options.OtherOptions (Array.ofList otherFlags) }
     //printfn "options = %A" options
 
     let rec checkFile count sourceFile =         
@@ -99,11 +120,88 @@ let ProcessCommandLine (argv: string[]) =
     let convFile (i: FSharpImplementationFileContents) =         
         //(i.QualifiedName, i.FileName
         { Code = convDecls i.Declarations }
-            
+
+    let checkFiles files =             
+        let rec loop rest acc = 
+            match rest with 
+            | file :: rest -> 
+                match checkFile 0 (Path.GetFullPath(file)) with 
+                | Result.Error () -> 
+                    printfn "fscd: ERRORS for %s" file
+                    Result.Error ()
+                | Result.Ok iopt -> 
+                    printfn "fscd: COMPILED %s" file
+                    match iopt with 
+                    | None -> Result.Error ()
+                    | Some i -> 
+                        printfn "fscd: GOT PortaCode for %s" file
+                        loop rest (i :: acc)
+            | [] -> Result.Ok (List.rev acc)
+        loop (List.ofArray files) []
+
     let jsonFiles (impls: FSharpImplementationFileContents[]) =         
         let data = Array.map convFile impls
         let json = Newtonsoft.Json.JsonConvert.SerializeObject(data)
         json
+
+    let sendToWebHook (hook: string) sourceFile fileContents = 
+        try 
+            let json = jsonFiles (Array.ofList fileContents)
+            printfn "fscd: GOT JSON for %s, length = %d" sourceFile json.Length
+            use webClient = new WebClient(Encoding = Encoding.UTF8)
+            printfn "fscd: SENDING TO WEBHOOK... " // : <<<%s>>>... --> %s" json.[0 .. min (json.Length - 1) 100] hook
+            let resp = webClient.UploadString (hook,"Put",json)
+            printfn "fscd: RESP FROM WEBHOOK: %s" resp
+        with err -> 
+            printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
+
+    let evaluateDecls fileContents = 
+        let assemblyTable = 
+            dict [| for r in options.OtherOptions do 
+                        if r.StartsWith("-r:") && not (r.Contains(".NETFramework")) then 
+                            let assemName = r.[3..]
+                            printfn "Script: pre-loading referenced assembly %s " assemName
+                            match System.Reflection.Assembly.LoadFrom(assemName) with 
+                            | null -> 
+                                printfn "Script: failed to pre-load referenced assembly %s " assemName
+                            | asm -> 
+                                let name = asm.GetName()
+                                yield (name.Name, asm) |]
+
+        let assemblyResolver (nm: Reflection.AssemblyName) =  
+            match assemblyTable.TryGetValue(nm.Name) with
+            | true, res -> res
+            | _ -> Reflection.Assembly.Load(nm)
+                                        
+        let ctxt = EvalContext(assemblyResolver)
+        let fileConvContents = [| for i in fileContents -> convFile i |]
+        for ds in fileConvContents do 
+                ctxt.AddDecls(ds.Code)
+        for ds in fileConvContents do 
+            printfn "evaluating decls.... " 
+            try 
+               ctxt.EvalDecls (envEmpty, ds.Code)
+            with e -> printfn "problem! %A" e.Message
+            printfn "...evaluated decls" 
+
+    let changed sourceFile (ev: FileSystemEventArgs) =
+        try 
+            printfn "fscd: CHANGE DETECTED for %s, COMPILING...." sourceFile
+
+            match checkFiles options.SourceFiles with 
+            | Result.Error () -> ()
+            | Result.Ok fileContents -> 
+
+            match webhook with 
+            | Some hook -> sendToWebHook hook sourceFile fileContents
+            | None -> 
+
+            if eval then 
+                printfn "fscd: CHANGE DETECTED for %s, EVALUATING...." sourceFile
+                evaluateDecls fileContents 
+
+        with err -> 
+            printfn "fscd: exception: %A" (err.ToString())
 
     if watch then 
         let watchers = 
@@ -113,46 +211,10 @@ let ProcessCommandLine (argv: string[]) =
                 printfn "fscd: WATCHING %s in %s" fileName path 
                 let watcher = new FileSystemWatcher(path, fileName)
                 watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-                let changed = (fun (ev: FileSystemEventArgs) -> 
-                    try 
-                        printfn "fscd: CHANGE DETECTED for %s, COMPILING...." sourceFile
-                        let rec loop files acc = 
-                            match files with 
-                            | file :: rest -> 
-                                match checkFile 0 (Path.GetFullPath(file)) with 
-                                | Result.Error () -> 
-                                    printfn "fscd: ERRORS for %s" file
-                                | Result.Ok iopt -> 
-                                    printfn "fscd: COMPILED %s" file
-                                    match iopt with 
-                                    | None -> ()
-                                    | Some i -> 
-                                        printfn "fscd: GOT PortaCode for %s" sourceFile
-                                        loop rest (i :: acc)
-                            | [] -> 
-                                let impls = List.rev acc 
-                                match webhook with 
-                                | Some hook -> 
-                                    try 
-                                        let json = jsonFiles (Array.ofList impls)
-                                        printfn "fscd: GOT JSON for %s, length = %d" sourceFile json.Length
-                                        use webClient = new WebClient(Encoding = Encoding.UTF8)
-                                        printfn "fscd: SENDING TO WEBHOOK... " // : <<<%s>>>... --> %s" json.[0 .. min (json.Length - 1) 100] hook
-                                        let resp = webClient.UploadString (hook,"Put",json)
-                                        printfn "fscd: RESP FROM WEBHOOK: %s" resp
-                                    with err -> 
-                                        printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
-
-                                | None -> 
-                                    ()
-                        loop (List.ofArray options.SourceFiles) []
-
-                    with err -> 
-                        printfn "fscd: exception: %A" (err.ToString()))
-                watcher.Changed.Add changed 
-                watcher.Created.Add changed
-                watcher.Deleted.Add changed
-                watcher.Renamed.Add changed
+                watcher.Changed.Add (changed sourceFile)
+                watcher.Created.Add (changed sourceFile)
+                watcher.Deleted.Add (changed sourceFile)
+                watcher.Renamed.Add (changed sourceFile)
                 yield watcher ]
 
         for watcher in watchers do
@@ -164,7 +226,7 @@ let ProcessCommandLine (argv: string[]) =
             watcher.EnableRaisingEvents <- true
 
     else
-        printfn "compiling, options = %A" options
+        //printfn "compiling, options = %A" options
         for o in options.OtherOptions do 
             printfn "compiling, option %s" o
         let fileContents = 
@@ -179,14 +241,7 @@ let ProcessCommandLine (argv: string[]) =
         printfn "#ImplementationFiles  = %d" fileContents.Length
 
         if eval then 
-            let ctxt = EvalContext()
-            let fileConvContents = [| for i in fileContents -> convFile i |]
-            for ds in fileConvContents do 
-                    ctxt.AddDecls(ds.Code)
-            for ds in fileConvContents do 
-                //printfn "eval %A" a
-                ctxt.EvalDecls (envEmpty, ds.Code)
-
+            evaluateDecls fileContents 
         else
             let fileConvContents = jsonFiles fileContents
 
