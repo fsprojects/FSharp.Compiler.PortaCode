@@ -155,7 +155,7 @@ let inline logicUnOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 =
     | (:? byte as v1) -> Value (box (u8 v1))
     | _ -> failwith "a construct used a type instantiation of an F# operator that is not yet supported in intepreted F# code"
 
-type EvalContext ()  =
+type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
     let members = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),Value>(HashIdentity.Structural)
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
     //let unionCaseResolutions = ConcurrentDictionary<(DType * DUnionCaseRef),ResolvedUnionCase>(HashIdentity.Structural)
@@ -234,11 +234,11 @@ type EvalContext ()  =
         | _ -> 
             let (DEntityRef typeName) = entityRef
             let res = 
-                match System.Type.GetType(typeName) with 
+                match System.Type.GetType(typeName, assemblyResolver=Func<_,_>(assemblyResolver), typeResolver=null) with 
                 | null -> 
                     if typeName.Contains("netstandard") then
                         let otherTypeName = typeName.Replace("netstandard", "mscorlib").Replace("cc7b13ffcd2ddd51", "b77a5c561934e089").Replace("2.0.0.0", "4.0.0.0")
-                        match System.Type.GetType(otherTypeName) with 
+                        match System.Type.GetType(otherTypeName, assemblyResolver=Func<_,_>(assemblyResolver), typeResolver=null) with 
                         | null -> failwithf "couldn't resolve type %A, also tried %A" typeName otherTypeName
                         | t -> REntity t
                     else
@@ -514,7 +514,6 @@ type EvalContext ()  =
         // Not really possible:
         | DExpr.AddressSet(lvalueExpr, rvalueExpr) -> ctxt.EvalAddressSet(convExpr lvalueExpr, convExpr rvalueExpr)
         | DExpr.ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> ctxt.EvalObjectExpr(convType objType, convExpr baseCallExpr, List.map convObjMember overrides, List.map (map2 convType (List.map convObjMember)) interfaceImplementations)
-        | DExpr.TraitCall(sourceTypes, traitName, typeArgs, typeInstantiation, argTypes, argExprs) -> ctxt.EvalTraitCall(sourceTypes, traitName, typeArgs, typeInstantiation, argTypes, argExprs)
 
         // Library only:
         | DExpr.UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> ctxt.EvalUnionCaseSet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convField unionCaseField, convExpr valueExpr)
@@ -523,6 +522,20 @@ type EvalContext ()  =
         // Very rare:
         | DExpr.ILFieldSet (objExprOpt, fieldType, fieldName, valueExpr) -> ctxt.EvalILFieldSet (convExprOpt objExprOpt, convType fieldType, fieldName, convExpr valueExpr)
 *)
+        | DExpr.TraitCall(sourceTypes, traitName, isInstance, typeInstantiation, argTypes, argExprs) -> 
+            let (RTypesOrObj sourceTypesR) = ctxt.ResolveTypes (env, sourceTypes)
+            let (RTypesOrObj argTypesR) = ctxt.ResolveTypes (env, argTypes)
+            let argExprsV : obj[] = ctxt.EvalExprs (env, argExprs)
+            match sourceTypesR with 
+            | [| sourceTypeR |] -> 
+                let objV = if isInstance then argExprsV.[0] else null
+                let argsV = if isInstance then argExprsV.[1..] else argExprsV
+                let resV = 
+                    sourceTypeR.InvokeMember(traitName, (if isInstance then BindingFlags.Instance else enum 0) ||| BindingFlags.Public, 
+                                                null, objV, argsV)
+                            |> Value      
+                resV
+            | _ -> failwith "trait call tbd - multiple source types"
         | DExpr.BaseValue _thisType 
         | DExpr.ThisValue _thisType -> 
             match env.Vals.TryGetValue "$this" with 

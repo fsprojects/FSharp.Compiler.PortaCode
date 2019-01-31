@@ -11,7 +11,6 @@ module Versions =
     let NETStandardLibrary = "2.0.3"
     let SystemReflectionEmitILGeneration = "4.3.0"
     let SystemReflectionEmitLightweight = "4.3.0"
-    let NewtonsoftJson = "11.0.2"
 
 [<AutoOpen>]
 module TestHelpers = 
@@ -168,7 +167,6 @@ PROJ.fs"""
         |> fun s -> s.Replace("NETSTANDARDLIBRARYVERSION", Versions.NETStandardLibrary)
         |> fun s -> s.Replace("SYSTEMREFLECTIONEMITILGENERATIONVERSION", Versions.SystemReflectionEmitILGeneration)
         |> fun s -> s.Replace("SYSTEMREFLECTIONEMITLIGHTWEIGHTVERSION", Versions.SystemReflectionEmitLightweight)
-        |> fun s -> s.Replace("NEWTONSOFTJSONVERSION", Versions.NewtonsoftJson)
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
@@ -418,6 +416,20 @@ let even a =
 if even 11 then failwith "fail!" 
 if not (even 10) then failwith "fail fail!" 
         """
+
+(*
+[<Test>]
+    member this.TraitCallSmoke() =
+        SimpleTestCase "TraitCallSmoke" """
+let even a = 
+    let rec even x = (if x = 0 then true else odd (x-1))
+    and odd x = (if x = 0 then false else even (x-1))
+    even a
+
+if even 11 then failwith "fail!" 
+if not (even 10) then failwith "fail fail!" 
+        """
+*)
 
 
     [<Test>]

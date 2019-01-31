@@ -1,10 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>netcoreapp2.1</TargetFramework>
+        <TargetFrameworks>net471;netcoreapp2.1</TargetFrameworks>
         <DefineConstants>$(DefineConstants);NETSTANDARD2_0</DefineConstants>
         <PackAsTool>True</PackAsTool>
         <ToolCommandName>fslive</ToolCommandName>
+        <PackageOutputPath>./nupkg</PackageOutputPath>
+      <PlatformTarget>x64</PlatformTarget>
     </PropertyGroup>
     <PropertyGroup>
         <PackageId>fslive-cli</PackageId>

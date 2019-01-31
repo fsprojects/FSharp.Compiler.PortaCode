@@ -28,7 +28,7 @@ type DExpr =
     | UnionCaseSet of DExpr * DType * DUnionCaseRef * DFieldRef  * DExpr
     | UnionCaseTag of DExpr * DType 
     | UnionCaseTest of DExpr  * DType * DUnionCaseRef 
-    //| TraitCall of DType[] * string * Ast.MemberFlags * DType[] * DType[] * DExpr[]
+    | TraitCall of DType[] * string * isInstance: bool * DType[] * DType[] * DExpr[]
     | NewTuple of DType * DExpr[]  
     | TupleGet of DType * int * DExpr 
     | Coerce of DType * DExpr  
