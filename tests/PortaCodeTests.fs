@@ -182,7 +182,7 @@ module TestCode
 
     let internal SimpleTestCase name code = 
         let directory = __SOURCE_DIRECTORY__ + "/data"
-        GeneralTestCase name code "" // no extra refs
+        GeneralTestCase directory name code "" // no extra refs
 
 [<TestClass>]
 type TestClass () =
