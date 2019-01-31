@@ -80,16 +80,25 @@ and MethodLambdaValue = MethodLambdaValue of (Type[] * obj[] -> obj)
 and ObjectValue = ObjectValue of Map<string,obj> ref
 
 let (|Value|) (v: Value) = v.Value
+
 let Value (v: obj) = { Value = v }
+
 let getVal (Value v) = v
+
 let bindAll = BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance ||| BindingFlags.Static
+
 let (|RTypeOrObj|) xR = match xR with RType xV -> xV | _ -> typeof<obj>
+
 let (|RTypesOrObj|) xR = match xR with RTypes xV -> xV | UTypes us -> Array.map (|RTypeOrObj|) us
+
+/// A sink to report operation of the interpreter
+type Sink = 
+    abstract BindLocal : DLocalDef * obj -> unit
 
 type Env = 
    { Vals: Map<string, Value>
      Types: Map<string,Type>
-     Targets: (DLocalDef[] * DExpr)[]}
+     Targets: (DLocalDef[] * DExpr)[] }
 
 let envEmpty = 
     { Vals = Map.empty; Types = Map.empty; Targets = Array.empty }
@@ -97,14 +106,38 @@ let envEmpty =
 let bindByName (env: Env) varName value = 
     { env with Vals = env.Vals.Add(varName, value) }
 
-let bind (env: Env) (var: DLocalDef) value = bindByName env var.Name value
+let bind (sink: Sink) (env: Env) (var: DLocalDef) (value: Value) = 
+    sink.BindLocal(var, value.Value)
+    bindByName env var.Name value
 
-let bindMany env vars values  = (env, vars, values) |||> Array.fold2 bind
+let bindMany sink env vars values  = (env, vars, values) |||> Array.fold2 (bind sink)
 
 let bindty (env: Env) (var : DGenericParameterDef) value = 
     { env with Types = env.Types.Add(var.Name, value) }
 
-let inline binOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 d = 
+type DMemberDef with 
+    member membDef.IsValueDef = 
+        not (membDef.Name = ".ctor") && not membDef.IsInstance && membDef.Parameters.Length = 0 && membDef.GenericParameters.Length = 0 
+
+let rec protectRaise (e: exn) = 
+    match e with 
+    | :? TargetInvocationException as e -> 
+        protectRaise e.InnerException
+    | _ -> raise e
+
+let protectInvoke f = 
+    try f() 
+    with e -> protectRaise e
+
+let EvalTraitCallInvoke (traitName, sourceTypeR: Type, isInstance, argExprsV: obj[]) =
+    let objV = if isInstance then argExprsV.[0] else null
+    let argsV = if isInstance then argExprsV.[1..] else argExprsV
+    let bindingFlags = (if isInstance then BindingFlags.Instance else BindingFlags.Static) ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.InvokeMethod
+    //printfn "sourceTypeR = %A, traitName = %s, objV = %A, argsV types = %A" sourceTypeR traitName objV [| for a in argsV -> a.GetType() |]
+    let resObj = try protectInvoke (fun () ->  sourceTypeR.InvokeMember(traitName, bindingFlags, null, objV, argsV)) with e -> printfn "failed!"; reraise ()
+    Value resObj
+
+let inline binOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 d = 
     match argsV.[0] with 
     | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
     | (:? double as v1) -> match argsV.[1] with (:? double as v2) -> Value (box (f64 v1 v2)) | _ -> failwith "type match: operator"
@@ -117,9 +150,9 @@ let inline binOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 d =
     | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
     | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
     | (:? decimal as v1) -> match argsV.[1] with (:? decimal as v2) -> Value (box (d v1 v2)) | _ -> failwith "type match: operator"
-    | _ -> failwith "a construct used a type instantiation of an F# operator that is not yet supported in intepreted F# code"
+    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
-let inline shiftOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
+let inline shiftOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
     | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
     | (:? int64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i64 v1 v2)) | _ -> failwith "type match: operator"
@@ -129,9 +162,9 @@ let inline shiftOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 =
     | (:? uint64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u64 v1 v2)) | _ -> failwith "type match: operator"
     | (:? uint16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
     | (:? byte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
-    | _ -> failwith "a construct used a type instantiation of an F# operator that is not yet supported in intepreted F# code"
+    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
-let inline logicBinOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
+let inline logicBinOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
     | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
     | (:? int64 as v1) -> match argsV.[1] with (:? int64 as v2) -> Value (box (i64 v1 v2)) | _ -> failwith "type match: operator"
@@ -141,9 +174,9 @@ let inline logicBinOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 =
     | (:? uint64 as v1) -> match argsV.[1] with (:? uint64 as v2) -> Value (box (u64 v1 v2)) | _ -> failwith "type match: operator"
     | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
     | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
-    | _ -> failwith "a construct used a type instantiation of an F# operator that is not yet supported in intepreted F# code"
+    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
-let inline logicUnOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
+let inline logicUnOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
     | (:? int32 as v1) -> Value (box (i32 v1))
     | (:? int64 as v1) -> Value (box (i64 v1))
@@ -153,9 +186,32 @@ let inline logicUnOp (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 =
     | (:? uint64 as v1) -> Value (box (u64 v1))
     | (:? uint16 as v1) -> Value (box (u16 v1))
     | (:? byte as v1) -> Value (box (u8 v1))
-    | _ -> failwith "a construct used a type instantiation of an F# operator that is not yet supported in intepreted F# code"
+    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
-type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
+type System.Exception with 
+    member e.EvalLocationStack 
+        with get() = 
+            if e.Data.Contains "location" then 
+                match e.Data.["location"] with 
+                | :? (DRange list) as stack -> stack
+                | _ -> []
+            else
+                []
+        and set (data : DRange list) = 
+            e.Data.["location"] <- data
+
+let protectEval compgen (r: DRange) f = 
+    if compgen then 
+        f()
+    else
+        try f() 
+        with e -> 
+            e.EvalLocationStack <- r :: e.EvalLocationStack
+            raise e
+
+type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
+    let assemblyResolver = defaultArg assemblyResolver System.Reflection.Assembly.Load
+    let sink = defaultArg sink { new Sink with member __.BindLocal(_,_) = () }
     let members = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),Value>(HashIdentity.Structural)
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
     //let unionCaseResolutions = ConcurrentDictionary<(DType * DUnionCaseRef),ResolvedUnionCase>(HashIdentity.Structural)
@@ -430,7 +486,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
                 entityResolutions.[DEntityRef entityName] <- UEntity entityDef
                 ctxt.AddDecls(subDecls)
             // TODO: static member properties will be evaluated eagerly incorrectly
-            | DDeclMember (membDef, _body) when not (membDef.Name = ".ctor") && not membDef.IsInstance && membDef.Parameters.Length = 0 && membDef.GenericParameters.Length = 0 -> ()
+            | DDeclMember (membDef, _body) when membDef.IsValueDef -> ()
             | DDeclMember (membDef, body) -> 
                 let ty = ctxt.ResolveEntity(membDef.EnclosingEntity)
                 let paramTypes = membDef.Parameters |> Array.map (fun p -> p.Type) 
@@ -444,7 +500,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
           (FuncConvert.FromFunc<Type[] * obj[],obj>(fun (tyargs, args) -> 
             if parameters.Length + (if isInstance then 1 else 0) <> args.Length then failwithf "arg/parameter mismatch for method with arguments %A" parameters
             let env = if isInstance then bindByName env "$this" (Value args.[0]) else env
-            let env = (env, parameters, (if isInstance then args.[1..] else args)) |||> Array.fold2 (fun env p a -> bind env p (Value a))
+            let env = (env, parameters, (if isInstance then args.[1..] else args)) |||> Array.fold2 (fun env p a -> bind sink env p (Value a))
             let env = (env, typeParameters, tyargs) |||> Array.fold2 (fun env p a -> bindty env p a)
             if isCtor then 
                 let objV = ObjectValue (ref Map.empty)
@@ -455,17 +511,47 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
                 let retV = ctxt.EvalExpr(env, bodyExpr) |> getVal
                 box retV))
 
+    member ctxt.TryEvalExpr (env, expr, range) = 
+        try 
+            protectEval false range (fun () -> ctxt.EvalExpr (env, expr)) |> Choice1Of2
+        with exn -> 
+            exn |> Choice2Of2
+
+    member ctxt.TryEvalDecls(env, decls: DDecl[]) = 
+        [| for d in decls do
+            match d with 
+            | DDeclEntity (_e, subDecls) -> 
+                yield! ctxt.TryEvalDecls(env, subDecls)
+            | DDeclMember (membDef, body) when membDef.IsValueDef -> 
+                let ty = ctxt.ResolveEntity(membDef.EnclosingEntity)
+                let res = ctxt.TryEvalExpr (env, body, membDef.Range)
+                match res with 
+                | Choice1Of2 res -> 
+                    members.[(ty, membDef.Name, RTypes [| |])] <- res
+                | Choice2Of2 err -> 
+                    yield (err, err.EvalLocationStack) 
+            | DDeclMember _-> 
+                ()
+            | DDecl.InitAction (expr, range) -> 
+                let res = ctxt.TryEvalExpr (env, expr, range) 
+                match res with 
+                | Choice1Of2 res -> 
+                    ()
+                | Choice2Of2 err -> 
+                    yield (err, err.EvalLocationStack) |]
+
     member ctxt.EvalDecls(env, decls: DDecl[]) = 
         for d in decls do
             match d with 
-            | DDeclEntity (_e, subDecls) -> ctxt.EvalDecls(env, subDecls)
-            | DDeclMember (membDef, body) when not (membDef.Name = ".ctor") && not membDef.IsInstance && membDef.Parameters.Length = 0 && membDef.GenericParameters.Length = 0 -> 
+            | DDeclEntity (_e, subDecls) -> 
+                ctxt.EvalDecls(env, subDecls)
+            | DDeclMember (membDef, body) when membDef.IsValueDef -> 
                 let ty = ctxt.ResolveEntity(membDef.EnclosingEntity)
-                let res = ctxt.EvalExpr (env, body)
+                let res = ctxt.EvalExpr (env, body) 
                 members.[(ty, membDef.Name, RTypes [| |])] <- res
             | DDeclMember _-> 
                 ()
-            | DDecl.InitAction expr -> 
+            | DDecl.InitAction (expr, range) -> 
                 ctxt.EvalExpr (env, expr) |> ignore
 
     member ctxt.GetExprDeclResult(ty, memberName) = 
@@ -528,15 +614,13 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
             let argExprsV : obj[] = ctxt.EvalExprs (env, argExprs)
             match sourceTypesR with 
             | [| sourceTypeR |] -> 
-                let objV = if isInstance then argExprsV.[0] else null
-                let argsV = if isInstance then argExprsV.[1..] else argExprsV
-                let resV = 
-                    sourceTypeR.InvokeMember(traitName, (if isInstance then BindingFlags.Instance else enum 0) ||| BindingFlags.Public, 
-                                                null, objV, argsV)
-                            |> Value      
-                resV
-            | _ -> failwith "trait call tbd - multiple source types"
+                EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
+            | [| sourceTypeR; sourceTypeR2 |] when sourceTypeR.Equals(sourceTypeR2) -> 
+                EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
+            | _ -> failwithf "trait/operator call on '%s' NYI in interpreter - multiple different source types" traitName
+
         | DExpr.BaseValue _thisType 
+
         | DExpr.ThisValue _thisType -> 
             match env.Vals.TryGetValue "$this" with 
             | true, res -> res
@@ -612,9 +696,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
                     let tinfo = cinfo.DeclaringType.MakeGenericType(typeArgsV)
                     tinfo.GetConstructors(bindAll) |> Array.find (fun cinfo2 -> cinfo2.MetadataToken = cinfo.MetadataToken)
                 else cinfo
-            try icinfo.Invoke(argsV) |> Value
-            with :? TargetInvocationException as e -> 
-                raise e.InnerException
+            protectInvoke (fun () -> icinfo.Invoke(argsV)) |> Value
 
         | UMember (Value (:? MethodLambdaValue as fM )), RTypesOrObj typeArgsV -> 
             let (MethodLambdaValue f) = fM
@@ -650,25 +732,22 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
                     match t.GetMethods(bindAll) |> Array.tryFind (fun m -> m.Name = "Invoke" && m.GetParameters().Length = 1) with 
                     | None -> failwithf "failed to find 'Invoke' method taking one argument on type %A" t
                     | Some res -> res
-                let res = 
-                    try i.Invoke(f, [| argsV.[0] |]) |> Value
-                    with :? TargetInvocationException as e -> 
-                        raise e.InnerException
+                let res = protectInvoke (fun () -> i.Invoke(f, [| argsV.[0] |])) |> Value
                 if argsV.Length > 1 then 
                     ctxt.EvalApplicationOfArg(env, res, argsV.[1..])
                 else
                     res
 
     member ctxt.EvalLet(env, (bindingVar, bindingExpr), bodyExpr) =
-        let bindingExprV = ctxt.EvalExpr(env, bindingExpr)
-        let env = bind env bindingVar bindingExprV
+        let bindingExprV = protectEval bindingVar.IsCompilerGenerated bindingVar.Range (fun () -> ctxt.EvalExpr(env, bindingExpr))
+        let env = bind sink env bindingVar bindingExprV
         ctxt.EvalExpr (env, bodyExpr)
 
     member ctxt.EvalLetRec(env, recursiveBindings, bodyExpr) =
         let valueThunks = recursiveBindings |> Array.map (fun _ -> { Value = null })
-        let envInner = bindMany env (Array.map fst recursiveBindings) valueThunks
-        (valueThunks, recursiveBindings) ||> Array.iter2 (fun valueThunk (_,recursiveBindingExpr) -> 
-            let v = ctxt.EvalExpr(envInner, recursiveBindingExpr) |> getVal 
+        let envInner = bindMany sink env (Array.map fst recursiveBindings) valueThunks
+        (valueThunks, recursiveBindings) ||> Array.iter2 (fun valueThunk (recursiveBindingVar,recursiveBindingExpr) -> 
+            let v = protectEval recursiveBindingVar.IsCompilerGenerated recursiveBindingVar.Range (fun () -> ctxt.EvalExpr(envInner, recursiveBindingExpr)) |> getVal 
             valueThunk.Value <- v)
         ctxt.EvalExpr (envInner, bodyExpr)
 
@@ -695,15 +774,15 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
         | RPrim_char -> Value (Convert.ToChar argsV.[0])
         | RPrim_neg -> Value (match argsV.[0] with :? int32 as v -> -v | _ -> failwith "nyi:neg")
         | RPrim_pos -> Value argsV.[0]
-        | RPrim_minus -> binOp argsV (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-)
-        | RPrim_divide -> binOp argsV (/) (/) (/) (/) (/) (/) (/) (/) (/) (/) (/)
-        | RPrim_mod -> binOp argsV (%) (%) (%) (%) (%) (%) (%) (%) (%) (%) (%)
-        | RPrim_shiftleft -> shiftOp argsV (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<)
-        | RPrim_shiftright -> shiftOp argsV (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>)
-        | RPrim_land -> logicBinOp argsV (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&)
-        | RPrim_lor -> logicBinOp argsV (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||)
-        | RPrim_lxor -> logicBinOp argsV (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^)
-        | RPrim_lneg -> logicUnOp argsV (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
+        | RPrim_minus -> binOp "op_Subtraction" argsV (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-)
+        | RPrim_divide -> binOp "op_Division" argsV (/) (/) (/) (/) (/) (/) (/) (/) (/) (/) (/)
+        | RPrim_mod -> binOp "op_Modulus" argsV (%) (%) (%) (%) (%) (%) (%) (%) (%) (%) (%)
+        | RPrim_shiftleft -> shiftOp "op_LeftShift" argsV (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<)
+        | RPrim_shiftright -> shiftOp "op_RightShift" argsV (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>)
+        | RPrim_land -> logicBinOp "op_BitwiseAnd" argsV (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&)
+        | RPrim_lor -> logicBinOp "op_BitwiseOr" argsV (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||)
+        | RPrim_lxor -> logicBinOp "op_ExclusiveOr" argsV (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^)
+        | RPrim_lneg -> logicUnOp "op_LogicalNot" argsV (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
         | RPrim_checked_int32 -> Value (Convert.ToInt32 argsV.[0])
         | RPrim_checked_int -> Value (Convert.ToInt32 argsV.[0])
         | RPrim_checked_int16 -> Value (Convert.ToInt16 argsV.[0])
@@ -715,8 +794,8 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
         //| RPrim_checked_unativeint -> Value (Convert.ToUIntPtr argsV.[0])
         //| RPrim_checked_nativeint -> Value (Convert.ToIntPtr argsV.[0])
         | RPrim_checked_char -> Value (Convert.ToChar argsV.[0])
-        | RPrim_checked_minus -> binOp argsV Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-)
-        | RPrim_checked_mul -> binOp argsV Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*)
+        | RPrim_checked_minus -> binOp "op_Subtraction" argsV Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-)
+        | RPrim_checked_mul -> binOp "op_Multiply" argsV Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*)
         | _ ->
 
         let typeArgs1R = ctxt.ResolveTypes (env, typeArgs1)
@@ -739,9 +818,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
                     minfo.MakeGenericMethod(typeArgs2V) 
                 else minfo
             let res = 
-                try iminfo.Invoke(objOptV, argsV) |> Value
-                with :? TargetInvocationException as e -> 
-                    raise e.InnerException
+                protectInvoke (fun () -> iminfo.Invoke(objOptV, argsV)) |> Value
 
             // Copy back the out parameters - note that argsV will have been mutates
             let parameters = minfo.GetParameters()
@@ -758,9 +835,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
             res
 
         | RMethod (:? ConstructorInfo as cinfo), RTypesOrObj _typeArgs1V, RTypesOrObj _typeArgs2V -> 
-            try cinfo.Invoke(argsV) |> Value
-            with :? TargetInvocationException as e -> 
-                raise e.InnerException
+            protectInvoke (fun () -> cinfo.Invoke(argsV)) |> Value
 
         | UMember (Value (:? MethodLambdaValue as fM )), RTypesOrObj typeArgs1V, RTypesOrObj typeArgs2V -> 
             let (MethodLambdaValue f) = fM
@@ -849,7 +924,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
         | RTypeOrObj domainTypeV, RTypeOrObj rangeTypeV -> 
             let funcTypeV = typedefof<int -> int>.MakeGenericType(domainTypeV, rangeTypeV)
             FSharp.Reflection.FSharpValue.MakeFunction(funcTypeV, (fun (arg: obj) -> 
-                let env = bind env lambdaVar (Value arg)
+                let env = bind sink env lambdaVar (Value arg)
                 ctxt.EvalExpr(env, bodyExpr) |> getVal)) |> box |> Value
 
     member ctxt.EvalTypeLambda(env, genericParams, bodyExpr) =
@@ -906,7 +981,7 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
     member ctxt.EvalDecisionTreeSuccess(env, decisionTargetIdx, decisionTargetExprs) =
         let (locals, expr) = env.Targets.[decisionTargetIdx]
         let decisionTargetExprsV = ctxt.EvalExprs (env, decisionTargetExprs)
-        let env = (env, locals, decisionTargetExprsV) |||> Array.fold2 (fun env p a -> bind env p (Value a))
+        let env = (env, locals, decisionTargetExprsV) |||> Array.fold2 (fun env p a -> bind sink env p (Value a))
         ctxt.EvalExpr (env, expr)
 
     member ctxt.EvalSequential(env, firstExpr, secondExpr) =
@@ -934,8 +1009,8 @@ type EvalContext (assemblyResolver: (AssemblyName -> Assembly))  =
     member ctxt.EvalTryWith(env, bodyExpr, filterVar, filterExpr, catchVar, catchExpr) =
         try 
             ctxt.EvalExpr (env, bodyExpr)
-        with e when ctxt.EvalBool (bind env filterVar (Value e), filterExpr) ->
-            ctxt.EvalExpr (bind env catchVar (Value e), catchExpr)
+        with e when ctxt.EvalBool (bind sink env filterVar (Value e), filterExpr) ->
+            ctxt.EvalExpr (bind sink env catchVar (Value e), catchExpr)
 
     member ctxt.EvalTupleGet(env, tupleElemIndex, tupleExpr) =
         let tupleExprV = ctxt.EvalExpr(env, tupleExpr) |> getVal

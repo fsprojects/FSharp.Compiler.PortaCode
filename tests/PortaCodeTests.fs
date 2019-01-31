@@ -184,7 +184,7 @@ module TestCode
         let directory = __SOURCE_DIRECTORY__ + "/data"
         GeneralTestCase directory name code "" // no extra refs
 
-[<TestClass>]
+//[<TestCaseSource>]
 type TestClass () =
 
     [<Test>]
