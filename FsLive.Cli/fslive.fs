@@ -19,6 +19,7 @@ open FSharp.Compiler.PortaCode.ProcessCommandLine
 #endif
 let main (argv: string[]) =
     try 
+        System.Environment.SetEnvironmentVariable("LIVECHECK", "1")
         ProcessCommandLine argv
 
     with e -> 
