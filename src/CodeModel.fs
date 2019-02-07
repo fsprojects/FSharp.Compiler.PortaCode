@@ -21,7 +21,7 @@ type DExpr =
     | IfThenElse   of DExpr * DExpr * DExpr  
     | DecisionTree   of DExpr * (DLocalDef[] * DExpr)[]
     | DecisionTreeSuccess of int * DExpr[]
-    | Call of DExpr option * DMemberRef * DType[] * DType[] * DExpr[] 
+    | Call of DExpr option * DMemberRef * DType[] * DType[] * DExpr[] * DRange option
     | NewObject of DMemberRef * DType[] * DExpr[] 
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
@@ -55,6 +55,7 @@ type DExpr =
     | ILFieldGet of DExpr option * DType * string 
     | ILFieldSet of DExpr option * DType * string  * DExpr 
     | ILAsm of string * DType[] * DExpr[]
+
 and DType = 
     | DNamedType of DEntityRef * DType[]
     | DFunctionType of DType * DType
@@ -62,24 +63,38 @@ and DType =
     | DArrayType of int * DType
     | DByRefType of DType
     | DVariableType of string
+
 and DLocalDef = 
-    { Name: string; IsMutable: bool; Type: DType; Range: DRange; IsCompilerGenerated: bool }
+    { Name: string; IsMutable: bool; Type: DType; Range: DRange option; IsCompilerGenerated: bool }
+
 and DMemberDef = 
-    { EnclosingEntity: DEntityRef; Name: string; GenericParameters: DGenericParameterDef[]; IsInstance: bool; Parameters: DLocalDef[]; ReturnType: DType; Range: DRange }
+    { EnclosingEntity: DEntityRef; Name: string; GenericParameters: DGenericParameterDef[]; IsInstance: bool; Parameters: DLocalDef[]; ReturnType: DType; Range: DRange option }
     member x.Ref = DMemberRef (x.EnclosingEntity, x.Name, x.GenericParameters.Length, (x.Parameters |> Array.map (fun p -> p.Type)), x.ReturnType)
-and DGenericParameterDef = { Name: string }
-and DEntityDef = { Name: string; GenericParameters: DGenericParameterDef[]; UnionCases: string[]; Range: DRange }
+
+and DGenericParameterDef = 
+    { Name: string }
+
+and DEntityDef = 
+    { Name: string; GenericParameters: DGenericParameterDef[]; UnionCases: string[]; Range: DRange option }
+
 and DEntityRef = DEntityRef of string 
+
 and DMemberRef = DMemberRef of DEntityRef * string * int * DType[] * DType
-and DLocalRef = DLocalRef of name: string * isThisValue: bool * isMutable: bool
+
+and DLocalRef = 
+    { Name: string; IsThisValue: bool; IsMutable: bool; Range: DRange option }
+
 and DFieldRef = DFieldRef of int * string
+
 and DUnionCaseRef = DUnionCaseRef of string
-and DObjectExprOverrideDef =  { Name: string; GenericParameters: DGenericParameterDef[]; Parameters: DLocalDef[]; Body: DExpr }
+
+and DObjectExprOverrideDef =  
+    { Name: string; GenericParameters: DGenericParameterDef[]; Parameters: DLocalDef[]; Body: DExpr }
 
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]
     | DDeclMember of DMemberDef * DExpr
-    | InitAction of DExpr * DRange
+    | InitAction of DExpr * DRange option
 
 type DFile = 
     { Code: DDecl[] }

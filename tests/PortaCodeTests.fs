@@ -1,4 +1,4 @@
-namespace FSharp.Compiler.PortaCode.Tests
+module FSharp.Compiler.PortaCode.Tests.Basic
 
 open System
 open System.IO
@@ -184,20 +184,17 @@ module TestCode
         let directory = __SOURCE_DIRECTORY__ + "/data"
         GeneralTestCase directory name code "" // no extra refs
 
-//[<TestCaseSource>]
-type TestClass () =
-
-    [<Test>]
-    member this.TestTuples () =
-        SimpleTestCase "TestTuples" """
+[<Test>]
+let TestTuples () =
+    SimpleTestCase "TestTuples" """
 module Tuples = 
     let x1 = (1, 2)
     let x2 = match x1 with (a,b) -> 1 + 2
         """
 
-    [<Test>]
-    member this.PlusOperator () =
-        SimpleTestCase "PlusOperator" """
+[<Test>]
+let PlusOperator () =
+    SimpleTestCase "PlusOperator" """
 module PlusOperator = 
     let x1 = 1 + 1
     let x5 = 1.0 + 2.0
@@ -214,8 +211,8 @@ module PlusOperator =
     let x17 = "a" + "b"
         """
 
-    [<Test>]
-    member this.MinusOperator () =
+[<Test>]
+let MinusOperator () =
         SimpleTestCase "MinusOperator" """
 module MinusOperator = 
     let x1 = 1 - 1
@@ -232,8 +229,8 @@ module MinusOperator =
     let x16 = 10.0M - 11.0M
         """
 
-    [<Test>]
-    member this.Options () =
+[<Test>]
+let Options () =
         SimpleTestCase "Options" """
 module Options = 
     let x2 = None : int option 
@@ -244,8 +241,8 @@ module Options =
     let x8 = x3.IsSome
         """
 
-    [<Test>]
-    member this.Exceptions () =
+[<Test>]
+let Exceptions () =
         SimpleTestCase "Exceptions" """
 module Exceptions = 
     let x2 = try invalidArg "a" "wtf" with :? System.ArgumentException -> () 
@@ -254,14 +251,14 @@ module Exceptions =
     if x5 <> 1 then failwith "fail! fail!" 
         """
 
-    [<Test>]
-    member this.TestEvalIsNone () =
+[<Test>]
+let TestEvalIsNone () =
         SimpleTestCase "TestEvalIsNone" """
 let x3 = (Some 3).IsNone
         """
 
-    [<Test>]
-    member this.TestEvalUnionCaseInGenericCofe () =
+[<Test>]
+let TestEvalUnionCaseInGenericCode () =
         SimpleTestCase "TestEvalUnionCaseInGenericCofe" """
 let f<'T>(x:'T) = Some x
 
@@ -269,8 +266,8 @@ let y = f 3
 printfn "y = %A, y.GetType() = %A" y (y.GetType())
         """
 
-    [<Test>]
-    member this.TestEvalNewOnClass() =
+[<Test>]
+let TestEvalNewOnClass() =
         SimpleTestCase "TestEvalNewOnClass" """
 type C(x: int) = 
     member __.X = x
@@ -279,8 +276,8 @@ let y = C(3)
 let z = if y.X <> 3 then failwith "fail!" else 1
         """
 
-    [<Test>]
-    member this.TestExtrinsicFSharpExtensionOnClass1() =
+[<Test>]
+let TestExtrinsicFSharpExtensionOnClass1() =
         SimpleTestCase "TestExtrinsicFSharpExtensionOnClass1" """
 type System.String with 
     member x.GetLength() = x.Length
@@ -289,8 +286,8 @@ let y = "a".GetLength()
 let z = if y <> 1 then failwith "fail!" else 1
         """
 
-    [<Test>]
-    member this.TestExtrinsicFSharpExtensionOnClass2() =
+[<Test>]
+let TestExtrinsicFSharpExtensionOnClass2() =
         SimpleTestCase "TestExtrinsicFSharpExtensionOnClass2" """
 type System.String with 
     member x.GetLength2(y:int) = x.Length + y
@@ -299,8 +296,8 @@ let y = "ab".GetLength2(5)
 let z = if y <> 7 then failwith "fail!" else 1
         """
 
-    [<Test>]
-    member this.TestExtrinsicFSharpExtensionOnClass3() =
+[<Test>]
+let TestExtrinsicFSharpExtensionOnClass3() =
         SimpleTestCase "TestExtrinsicFSharpExtensionOnClass3" """
 type System.String with 
     static member GetLength3(x:string) = x.Length
@@ -309,8 +306,8 @@ let y = System.String.GetLength3("abc")
 let z = if y <> 3 then failwith "fail!" else 1
         """
 
-    [<Test>]
-    member this.TestExtrinsicFSharpExtensionOnClass4() =
+[<Test>]
+let TestExtrinsicFSharpExtensionOnClass4() =
         SimpleTestCase "TestExtrinsicFSharpExtensionOnClass4" """
 type System.String with 
     member x.LengthProp = x.Length
@@ -319,8 +316,25 @@ let y = "abcd".LengthProp
 let z = if y <> 4 then failwith "fail!" else 1
         """
 
-    [<Test>]
-    member this.TestEvalSetterOnClass() =
+[<Test>]
+let TestTopFunctionIsNotValue() =
+        SimpleTestCase "TestTopFunctionIsNotValue" """
+let mutable x = 0
+let y() = (x <- x + 1; x)
+let z1 = y()
+let z2 = y()
+if x <> 2 || z1 <> 1 || z2 <> 2 then failwith "fail!" else 1
+        """
+
+[<Test>]
+let TestTopUnitValue() =
+        SimpleTestCase "TestTopUnitValue" """
+let mutable x = 0
+if x <> 0 then failwith "fail!" 
+        """
+
+[<Test>]
+let TestEvalSetterOnClass() =
         SimpleTestCase "TestEvalSetterOnClass" """
 type C(x: int) = 
     let mutable y = x
@@ -332,15 +346,15 @@ c.Y <- 4
 if c.Y <> 4 then failwith "fail! fail!" 
         """
 
-    [<Test>]
-    member this.TestLengthOnList() =
+[<Test>]
+let TestLengthOnList() =
         SimpleTestCase "TestLengthOnList" """
 let x = [1;2;3].Length
 if x <> 3 then failwith "fail! fail!" 
         """
 // Known limitation of FSharp Compiler Service
-//    [<Test>]
-//    member this.TestEvalLocalFunctionOnClass() =
+//[<Test>]
+//    let TestEvalLocalFunctionOnClass() =
 //        SimpleTestCase "TestEvalLocalFunctionOnClass" """
 //type C(x: int) = 
 //    let f x = x + 1
@@ -350,31 +364,31 @@ if x <> 3 then failwith "fail! fail!"
 //if c.Y <> 4 then failwith "fail!" 
 //        """
 
-    [<Test>]
-    member this.TestEquals() =
+[<Test>]
+let TestEquals() =
         SimpleTestCase "TestEquals" """
 let x = (1 = 2)
         """
 
 
-    [<Test>]
-    member this.TestTypeTest() =
+[<Test>]
+let TestTypeTest() =
         SimpleTestCase "TestTypeTest" """
 let x = match box 1 with :? int as a -> a | _ -> failwith "fail!"
 if x <> 1 then failwith "fail fail!" 
         """
 
 
-    [<Test>]
-    member this.TestTypeTest2() =
+[<Test>]
+let TestTypeTest2() =
         SimpleTestCase "TestTypeTest2" """
 let x = match box 2 with :? string as a -> failwith "fail!" | _ -> 1
 if x <> 1 then failwith "fail fail!" 
         """
 
 // Known limitation of FSharp Compiler Service
-//    [<Test>]
-//    member this.GenericThing() =
+//[<Test>]
+//    let GenericThing() =
 //        SimpleTestCase "GenericThing" """
 //let f () = 
 //    let g x = x
@@ -385,8 +399,8 @@ if x <> 1 then failwith "fail fail!"
 //if c 5 <> 5 then failwith "fail fail fail!" 
 //        """
 
-    [<Test>]
-    member this.DateTime() =
+[<Test>]
+let DateTime() =
         SimpleTestCase "DateTime" """
 let v1 = System.DateTime.Now
 let v2 = v1.Date
@@ -394,8 +408,8 @@ let mutable v3 = System.DateTime.Now
 let v4 = v3.Date
         """
 
-    [<Test>]
-    member this.LocalMutation() =
+[<Test>]
+let LocalMutation() =
         SimpleTestCase "LocalMutation" """
 let f () = 
     let mutable x = 1
@@ -406,8 +420,8 @@ if f() <> 3 then failwith "fail fail!"
         """
 
 
-    [<Test>]
-    member this.LetRecSmoke() =
+[<Test>]
+let LetRecSmoke() =
         SimpleTestCase "LetRecSmoke" """
 let even a = 
     let rec even x = (if x = 0 then true else odd (x-1))
@@ -420,7 +434,7 @@ if not (even 10) then failwith "fail fail!"
 
 (*
 [<Test>]
-    member this.TraitCallSmoke() =
+    let TraitCallSmoke() =
         SimpleTestCase "TraitCallSmoke" """
 let even a = 
     let rec even x = (if x = 0 then true else odd (x-1))
@@ -433,8 +447,8 @@ if not (even 10) then failwith "fail fail!"
 *)
 
 
-    [<Test>]
-    member this.TryGetValueSmoke() =
+[<Test>]
+let TryGetValueSmoke() =
         SimpleTestCase "TryGetValueSmoke" """
 let m = dict  [ (1,"2") ]
 let f() = 
@@ -445,8 +459,8 @@ let f() =
 f()
        """
 
-    [<Test>]
-    member this.TestCallUnitFunction() =
+[<Test>]
+let TestCallUnitFunction() =
         SimpleTestCase "TestCallUnitFunction" """
 let theRef = FSharp.Core.LanguagePrimitives.GenericZeroDynamic<int>()
        """

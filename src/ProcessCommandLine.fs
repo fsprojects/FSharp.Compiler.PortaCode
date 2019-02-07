@@ -8,6 +8,7 @@ open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
 open FSharp.Compiler.PortaCode.FromCompilerService
 open System
+open System.Collections.Generic
 open System.IO
 open Microsoft.FSharp.Compiler.SourceCodeServices
 open System.Net
@@ -20,6 +21,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable eval = false
     let mutable watch = false
+    let mutable useEditFiles = false
     let mutable writeinfo = false
     let mutable webhook = None
     let mutable otherFlags = []
@@ -38,7 +40,9 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif arg = "--watch" then watch <- true
+                elif arg = "--vshack" then useEditFiles <- true
                 elif arg = "--eval" then eval <- true
+                elif arg = "--livechecksonly" then eval <- true
                 elif arg = "--writeinfo" then writeinfo <- true
                 elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
                 else yield arg  |]
@@ -52,6 +56,30 @@ let ProcessCommandLine (argv: string[]) =
             fsproj <- Some file
         | _ -> 
             failwith "multiple project files found" 
+
+    let editDirAndFile (fileName: string) =
+        assert useEditFiles
+        let infoDir = Path.Combine(Path.GetDirectoryName fileName,".fsharp")
+        let editFile = Path.Combine(infoDir,Path.GetFileName fileName + ".edit")
+        if not (Directory.Exists infoDir) then 
+            Directory.CreateDirectory infoDir |> ignore
+        infoDir, editFile
+
+    let readFile (fileName: string) = 
+        if useEditFiles && watch then 
+            let infoDir, editFile = editDirAndFile fileName
+            let preferEditFile =
+                try 
+                    Directory.Exists infoDir && File.Exists editFile && File.Exists fileName && File.GetLastWriteTime(editFile) > File.GetLastWriteTime(fileName)
+                with _ -> 
+                    false
+            if preferEditFile then 
+                printfn "*** preferring %s to %s ***" editFile fileName
+                File.ReadAllText editFile
+            else
+                File.ReadAllText fileName
+        else
+            File.ReadAllText fileName
 
     let options = 
         match fsproj with 
@@ -74,7 +102,7 @@ let ProcessCommandLine (argv: string[]) =
         
             match sourceFiles with 
             | [| script |] when script.EndsWith(".fsx") ->
-                let text = File.ReadAllText script
+                let text = readFile script
                 let options, errors = checker.GetProjectOptionsFromScript(script, text, otherFlags=otherFlags) |> Async.RunSynchronously
                 if errors.Length > 0 then 
                     for error in errors do 
@@ -98,7 +126,7 @@ let ProcessCommandLine (argv: string[]) =
 
     let rec checkFile count sourceFile =         
         try 
-            let _, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, File.ReadAllText(sourceFile), options) |> Async.RunSynchronously  
+            let _, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, readFile sourceFile, options) |> Async.RunSynchronously  
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
                 printfn "aborted"
@@ -119,9 +147,10 @@ let ProcessCommandLine (argv: string[]) =
             printfn "%s" (exn.ToString())
             Result.Error ()
 
+    let keepRanges = eval
     let convFile (i: FSharpImplementationFileContents) =         
         //(i.QualifiedName, i.FileName
-        i.FileName, { Code = convDecls i.Declarations }
+        i.FileName, { Code = Convert(keepRanges).ConvertDecls i.Declarations }
 
     let checkFiles files =             
         let rec loop rest acc = 
@@ -158,24 +187,46 @@ let ProcessCommandLine (argv: string[]) =
             printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
 
     /// Write an info file containing extra information to make available to F# tooling
-    let writeInfoFile tooltips sourceFile errors = 
+    let writeInfoFile bindings uses sourceFile errors = 
         let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
         let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
         let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
         printfn "writing info file %s..." infoFile 
         try 
+            let tooltips = 
+                [| for (x: DLocalDef, value: obj) in bindings do 
+                       match x.Range with 
+                       | None -> () 
+                       | Some range -> yield (range, value)
+                   for (x: DLocalRef, value: obj) in uses do 
+                       match x.Range with 
+                       | None -> () 
+                       | Some range -> yield(range, value) |]
+
             let lines = 
-                [| for (x: DLocalDef, value: obj) in tooltips do
-                        let range = x.Range
-                        // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+                let ranges =  HashSet<_>()
+                [| for (range, value) in tooltips do
                         match value with 
                         | null -> ()
                         | value -> 
-                            printfn "value %s " (value.GetType().Name) 
+                        // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+                        let txt = 
                             if value.GetType().Name = "DT`1" then 
                                 let msg = sprintf "%A" (value.ToString()) 
                                 let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\t%s" range.StartLine range.StartColumn range.EndLine range.EndColumn msg
-                                yield line
+                                Some line
+                            elif value.GetType().IsArray then 
+                                let msg = sprintf "array rank %d" (value :?> Array).Rank 
+                                let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\t%s" range.StartLine range.StartColumn range.EndLine range.EndColumn msg
+                                Some line
+                            else None
+                        match txt with 
+                        | None -> ()
+                        | Some msg -> 
+                            if not (ranges.Contains((range, msg))) then 
+                                ranges.Add((range, msg)) |> ignore
+                                yield msg
+
                    for (exn:exn, rangeStack) in errors do 
                         if List.length rangeStack > 0 then 
                             let range = List.last rangeStack 
@@ -209,11 +260,14 @@ let ProcessCommandLine (argv: string[]) =
             | true, res -> res
             | _ -> Reflection.Assembly.Load(nm)
                                         
-        let tooltips = ResizeArray()
+        let bindings = ResizeArray()
+        let uses = ResizeArray()
         let sink =
             if writeinfo then 
                 { new Sink with 
-                     member __.BindLocal(x: DLocalDef, value: obj) = tooltips.Add ((x, value)) }
+                     member __.BindLocal(x, value) = bindings.Add ((x, value.Value))
+                     member __.UseLocal(x, value) = uses.Add ((x, value.Value))
+                     }
                 |> Some
             else  
                 None
@@ -229,7 +283,7 @@ let ProcessCommandLine (argv: string[]) =
             let errors = ctxt.TryEvalDecls (envEmpty, ds.Code)
 
             if writeinfo then 
-                writeInfoFile (tooltips.ToArray()) sourceFile errors
+                writeInfoFile (bindings.ToArray()) (uses.ToArray()) sourceFile errors
 
             printfn "...evaluated decls" 
 
@@ -267,18 +321,25 @@ let ProcessCommandLine (argv: string[]) =
             for sourceFile in options.SourceFiles do
                 changed "initial" ()
 
+        let mkWatcher (path, fileName) = 
+            let watcher = new FileSystemWatcher(path, fileName)
+            watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
+            watcher.Changed.Add (changed "Changed")
+            watcher.Created.Add (changed "Created")
+            watcher.Deleted.Add (changed "Deleted")
+            watcher.Renamed.Add (changed "Renamed")
+            watcher
+
         let watchers = 
             [ for sourceFile in options.SourceFiles do
                 let path = Path.GetDirectoryName(sourceFile)
                 let fileName = Path.GetFileName(sourceFile)
                 printfn "fscd: WATCHING %s in %s" fileName path 
-                let watcher = new FileSystemWatcher(path, fileName)
-                watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-                watcher.Changed.Add (changed "Changed")
-                watcher.Created.Add (changed "Created")
-                watcher.Deleted.Add (changed "Deleted")
-                watcher.Renamed.Add (changed "Renamed")
-                yield watcher ]
+                yield mkWatcher (path, fileName)
+                if useEditFiles then 
+                    let infoDir, editFile = editDirAndFile fileName
+                    printfn "fscd: WATCHING %s in %s" editFile infoDir 
+                    yield mkWatcher (infoDir, Path.GetFileName editFile) ]
 
         for watcher in watchers do
             watcher.EnableRaisingEvents <- true
