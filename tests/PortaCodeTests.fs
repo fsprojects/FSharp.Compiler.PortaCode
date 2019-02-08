@@ -170,7 +170,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    let GeneralTestCase directory name code refs =
+    let GeneralTestCaseLiveChecks directory name code refs livechecks =
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
         File.WriteAllText (name + ".fs", """
@@ -178,11 +178,22 @@ module TestCode
 """ + code)
         createNetStandardProjectArgs name refs
 
-        Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine( [| "dummy.exe"; "--eval"; "@" + name + ".args.txt" |]))
+        let args = 
+            [| yield "dummy.exe"; 
+               yield "--eval"; 
+               if livechecks then yield "--livechecksonly"; 
+               yield "@" + name + ".args.txt" |]
+        Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine(args))
+
+    let GeneralTestCase directory name code refs = GeneralTestCaseLiveChecks directory name code refs false
 
     let internal SimpleTestCase name code = 
         let directory = __SOURCE_DIRECTORY__ + "/data"
         GeneralTestCase directory name code "" // no extra refs
+
+    let internal SimpleLiveCheckTestCase name code = 
+        let directory = __SOURCE_DIRECTORY__ + "/data"
+        GeneralTestCaseLiveChecks directory name code "" true // no extra refs
 
 [<Test>]
 let TestTuples () =
@@ -190,6 +201,47 @@ let TestTuples () =
 module Tuples = 
     let x1 = (1, 2)
     let x2 = match x1 with (a,b) -> 1 + 2
+        """
+
+[<Test>]
+let SmokeTestLiveCheck () =
+    SimpleLiveCheckTestCase "SmokeTestLiveCheck" """
+module SmokeTestLiveCheck = 
+    type LiveCheckAttribute() = 
+        inherit System.Attribute()
+    
+    let mutable v = 0
+    
+    let x1 = 
+        v <- v + 1
+        4 
+
+    [<LiveCheck>]
+    let x2 = 
+        v <- v + 1
+        4 
+
+    [<LiveCheck>]
+    let x3 = 
+        // For live checking, bindings are executed on-demand
+        // 'v' is only incremented once - because `x1` is not yet evaluated!
+        if v <> 1 then failwithf "no way John, v = %d" v
+
+        let y1 = x2 + 3
+        
+        // 'v' has not been incremented again - because `x2` is evaluated once!
+        if v <> 1 then failwithf "no way Jane, v = %d" v
+        if y1 <> 7 then failwithf "no way Juan, y1 = %d" y1
+
+        let y2 = x1 + 1
+
+        // 'v' has been incremented - because `x1` is now evaluated!
+        if v <> 2 then failwithf "no way Julie, v = %d" v
+        if y2 <> 5 then failwithf "no way Jose, x2 = %d, v = %d" x2 v
+
+        5 
+
+    let x4 : int = failwith "no way"
         """
 
 [<Test>]
@@ -317,13 +369,33 @@ let z = if y <> 4 then failwith "fail!" else 1
         """
 
 [<Test>]
+let TestTopMutables() =
+        SimpleTestCase "TestTopFunctionIsNotValue" """
+let mutable x = 0
+if x <> 0 then failwith "failure A!" else 1
+let y(c:int) = 
+    (x <- x + 1
+     x)
+let z1 = y(3)
+if x <> 1 then failwith "failure B!" else 1
+let z2 = y(4)
+if x <> 2 then failwith "failure C!" else 1
+if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
+        """
+
+[<Test>]
 let TestTopFunctionIsNotValue() =
         SimpleTestCase "TestTopFunctionIsNotValue" """
 let mutable x = 0
-let y() = (x <- x + 1; x)
+if x <> 0 then failwith "failure A!" else 1
+let y(c:int) = 
+    (x <- x + 1
+     x)
 let z1 = y()
+if x <> 1 then failwith "failure B!" else 1
 let z2 = y()
-if x <> 2 || z1 <> 1 || z2 <> 2 then failwith "fail!" else 1
+if x <> 2 then failwith "failure C!" else 1
+if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
         """
 
 [<Test>]

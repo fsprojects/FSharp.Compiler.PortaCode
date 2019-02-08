@@ -14,7 +14,7 @@ type DExpr =
     | Value  of DLocalRef
     | ThisValue  of DType 
     | BaseValue  of DType 
-    | Application of DExpr * DType[] * DExpr[]  
+    | Application of DExpr * DType[] * DExpr[] * DRange option 
     | Lambda of DType * DType * DLocalDef * DExpr  
     | TypeLambda of DGenericParameterDef[] * DExpr  
     | Quote  of DExpr  
@@ -34,14 +34,14 @@ type DExpr =
     | UnionCaseSet of DExpr * DType * DUnionCaseRef * DFieldRef  * DExpr
     | UnionCaseTag of DExpr * DType 
     | UnionCaseTest of DExpr  * DType * DUnionCaseRef 
-    | TraitCall of DType[] * string * isInstance: bool * DType[] * DType[] * DExpr[]
+    | TraitCall of DType[] * string * isInstance: bool * DType[] * DType[] * DExpr[] * DRange option
     | NewTuple of DType * DExpr[]  
     | TupleGet of DType * int * DExpr 
     | Coerce of DType * DExpr  
     | NewArray of DType * DExpr[]  
     | TypeTest of DType * DExpr  
     | AddressSet of DExpr * DExpr  
-    | ValueSet of DLocalRef * DExpr  
+    | ValueSet of Choice<DLocalRef, DMemberRef> * DExpr  
     | Unused
     | DefaultValue of DType  
     | Const of obj * DType
@@ -68,7 +68,15 @@ and DLocalDef =
     { Name: string; IsMutable: bool; Type: DType; Range: DRange option; IsCompilerGenerated: bool }
 
 and DMemberDef = 
-    { EnclosingEntity: DEntityRef; Name: string; GenericParameters: DGenericParameterDef[]; IsInstance: bool; Parameters: DLocalDef[]; ReturnType: DType; Range: DRange option }
+    { EnclosingEntity: DEntityRef
+      Name: string
+      GenericParameters: DGenericParameterDef[]
+      IsInstance: bool
+      IsValue: bool
+      Parameters: DLocalDef[]
+      ReturnType: DType
+      Range: DRange option }
+
     member x.Ref = DMemberRef (x.EnclosingEntity, x.Name, x.GenericParameters.Length, (x.Parameters |> Array.map (fun p -> p.Type)), x.ReturnType)
 
 and DGenericParameterDef = 
@@ -93,7 +101,7 @@ and DObjectExprOverrideDef =
 
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]
-    | DDeclMember of DMemberDef * DExpr
+    | DDeclMember of DMemberDef * DExpr * isLiveCheck: bool
     | InitAction of DExpr * DRange option
 
 type DFile = 

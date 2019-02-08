@@ -20,6 +20,7 @@ let checker = FSharpChecker.Create(keepAssemblyContents = true)
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable eval = false
+    let mutable livechecksonly = false
     let mutable watch = false
     let mutable useEditFiles = false
     let mutable writeinfo = false
@@ -42,7 +43,7 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--watch" then watch <- true
                 elif arg = "--vshack" then useEditFiles <- true
                 elif arg = "--eval" then eval <- true
-                elif arg = "--livechecksonly" then eval <- true
+                elif arg = "--livechecksonly" then livechecksonly <- true
                 elif arg = "--writeinfo" then writeinfo <- true
                 elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
                 else yield arg  |]
@@ -130,22 +131,26 @@ let ProcessCommandLine (argv: string[]) =
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
                 printfn "aborted"
-                Result.Error ()
+                Result.Error None
+
             | FSharpCheckFileAnswer.Succeeded res -> 
                 let mutable hasErrors = false
                 for error in res.Errors do 
                     printfn "%s" (error.ToString())
                     if error.Severity = FSharpErrorSeverity.Error then 
                         hasErrors <- true
+
                 if hasErrors then 
-                    Result.Error ()
+                    Result.Error res.ImplementationFile
                 else
                     Result.Ok res.ImplementationFile 
         with 
-        | :? System.IO.IOException when count = 0 -> System.Threading.Thread.Sleep 500; checkFile 1 sourceFile
+        | :? System.IO.IOException when count = 0 -> 
+            System.Threading.Thread.Sleep 500
+            checkFile 1 sourceFile
         | exn -> 
             printfn "%s" (exn.ToString())
-            Result.Error ()
+            Result.Error None
 
     let keepRanges = eval
     let convFile (i: FSharpImplementationFileContents) =         
@@ -157,9 +162,13 @@ let ProcessCommandLine (argv: string[]) =
             match rest with 
             | file :: rest -> 
                 match checkFile 0 (Path.GetFullPath(file)) with 
-                | Result.Error () -> 
+
+                // Note, if livechecks are on, we continue on regardless of errors
+                | Result.Error iopt when not livechecksonly -> 
                     printfn "fscd: ERRORS for %s" file
                     Result.Error ()
+
+                | Result.Error iopt 
                 | Result.Ok iopt -> 
                     printfn "fscd: COMPILED %s" file
                     match iopt with 
@@ -186,61 +195,74 @@ let ProcessCommandLine (argv: string[]) =
         with err -> 
             printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
 
-    /// Write an info file containing extra information to make available to F# tooling
-    let writeInfoFile bindings uses sourceFile errors = 
+    let emitInfoFile sourceFile lines = 
         let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
         let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
         let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
         printfn "writing info file %s..." infoFile 
         try 
-            let tooltips = 
-                [| for (x: DLocalDef, value: obj) in bindings do 
-                       match x.Range with 
-                       | None -> () 
-                       | Some range -> yield (range, value)
-                   for (x: DLocalRef, value: obj) in uses do 
-                       match x.Range with 
-                       | None -> () 
-                       | Some range -> yield(range, value) |]
-
-            let lines = 
-                let ranges =  HashSet<_>()
-                [| for (range, value) in tooltips do
-                        match value with 
-                        | null -> ()
-                        | value -> 
-                        // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
-                        let txt = 
-                            if value.GetType().Name = "DT`1" then 
-                                let msg = sprintf "%A" (value.ToString()) 
-                                let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\t%s" range.StartLine range.StartColumn range.EndLine range.EndColumn msg
-                                Some line
-                            elif value.GetType().IsArray then 
-                                let msg = sprintf "array rank %d" (value :?> Array).Rank 
-                                let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\t%s" range.StartLine range.StartColumn range.EndLine range.EndColumn msg
-                                Some line
-                            else None
-                        match txt with 
-                        | None -> ()
-                        | Some msg -> 
-                            if not (ranges.Contains((range, msg))) then 
-                                ranges.Add((range, msg)) |> ignore
-                                yield msg
-
-                   for (exn:exn, rangeStack) in errors do 
-                        if List.length rangeStack > 0 then 
-                            let range = List.last rangeStack 
-                            let message = "Live check failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
-                            let msg = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
-                            yield msg |]
-
-            if not (Directory.Exists infoDir) then 
-                Directory.CreateDirectory(infoDir) |> ignore
-
-            File.WriteAllLines(lockFile, [ sprintf "locked at %A by %s" System.DateTime.Now __SOURCE_FILE__ ])
             File.WriteAllLines(infoFile, lines)
         finally
             try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
+
+    let clearInfoFile sourceFile = 
+        emitInfoFile sourceFile [| |]
+
+    let rec formatValue (value: obj) = 
+        match value with 
+        | null -> "<null>"
+        //| :? int -> ""
+        | value -> 
+        let ty = value.GetType()
+        if ty.Name = "DT`1" then 
+            // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+            value.ToString()
+        elif Reflection.FSharpType.IsTuple(ty) then 
+            let vs = Reflection.FSharpValue.GetTupleFields(value)
+            "(" + String.concat "," (Array.map formatValue vs) + ")"
+        elif ty.IsArray then 
+            let value = (value :?> Array)
+            if ty.GetArrayRank() = 1 then 
+                "[| " + String.concat "; " [| for i in 0 .. min 10 (value.GetLength(0) - 1) -> formatValue (value.GetValue(i)) |] + " |]"
+            else
+                sprintf "array rank %d" value.Rank 
+        elif Reflection.FSharpType.IsRecord(ty) then 
+            let fs = Reflection.FSharpType.GetRecordFields(ty)
+            let vs = Reflection.FSharpValue.GetRecordFields(value)
+            "{ " + String.concat "; " [| for (f,v) in Array.zip fs vs -> f.Name + "=" + formatValue v |] + " }"
+        elif Reflection.FSharpType.IsUnion(ty) then 
+            let uc, vs = Reflection.FSharpValue.GetUnionFields(value, ty)
+            uc.Name + "(" + String.concat ", " [| for v in vs -> formatValue v |] + ")"
+        else 
+            value.ToString() //"unknown value"
+
+    /// Write an info file containing extra information to make available to F# tooling
+    let writeInfoFile (tooltips: (DRange * string * obj)[]) sourceFile errors = 
+
+        let lines = 
+            let ranges =  HashSet<_>()
+            [| for (range, action, value) in tooltips do
+                    // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+                    let valueText = formatValue value
+                    let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                    let valueText = 
+                        if valueText.Length > 50 then 
+                            valueText.[0 .. 50] + "..."
+                        else   
+                            valueText
+                    let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck: %s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn (if action = "" then "" else action + " ") valueText
+                    if not (ranges.Contains(line)) then 
+                        ranges.Add(line) |> ignore
+                        yield line
+
+               for (exn:exn, rangeStack) in errors do 
+                    if List.length rangeStack > 0 then 
+                        let range = List.last rangeStack 
+                        let message = "LiveCheck failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
+                        let line = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
+                        yield line |]
+
+        emitInfoFile sourceFile lines
 
     let evaluateDecls fileContents = 
         let assemblyTable = 
@@ -265,8 +287,14 @@ let ProcessCommandLine (argv: string[]) =
         let sink =
             if writeinfo then 
                 { new Sink with 
-                     member __.BindLocal(x, value) = bindings.Add ((x, value.Value))
-                     member __.UseLocal(x, value) = uses.Add ((x, value.Value))
+                     member __.CallAndReturn(x, _typeArgs, args, res) = 
+                         x.Range |> Option.iter (fun r -> 
+                             for (i, arg) in Array.indexed args do 
+                                bindings.Add ((r, sprintf "arg %d" i, arg))
+                             bindings.Add ((r, "return", res.Value)))
+                     member __.BindValue(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
+                     member __.BindLocal(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
+                     member __.UseLocal(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
                      }
                 |> Some
             else  
@@ -280,10 +308,13 @@ let ProcessCommandLine (argv: string[]) =
 
         for (sourceFile, ds) in fileConvContents do 
             printfn "evaluating decls.... " 
-            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code)
+            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livechecksonly)
 
             if writeinfo then 
-                writeInfoFile (bindings.ToArray()) (uses.ToArray()) sourceFile errors
+                writeInfoFile (bindings.ToArray()) sourceFile errors
+            else
+                for (exn, _range) in errors do
+                   raise exn
 
             printfn "...evaluated decls" 
 
@@ -293,6 +324,7 @@ let ProcessCommandLine (argv: string[]) =
 
             match checkFiles options.SourceFiles with 
             | Result.Error () -> ()
+
             | Result.Ok allFileContents -> 
 
             match webhook with 
@@ -308,7 +340,8 @@ let ProcessCommandLine (argv: string[]) =
                 let fileConvContents = jsonFiles (Array.ofList allFileContents)
 
                 printfn "%A" fileConvContents
-        with err -> 
+
+        with err when watch -> 
             printfn "fscd: exception: %A" (err.ToString())
 
     for o in options.OtherOptions do 
