@@ -19,9 +19,11 @@ type Convert(includeRanges: bool) =
     let rec convExpr (expr:FSharpExpr) : DExpr = 
 
         match expr with 
-        | BasicPatterns.AddressOf(lvalueExpr) -> DExpr.AddressOf(convExpr lvalueExpr)
+        | BasicPatterns.AddressOf(lvalueExpr) -> 
+            DExpr.AddressOf(convExpr lvalueExpr)
 
-        | BasicPatterns.AddressSet(lvalueExpr, rvalueExpr) -> DExpr.AddressSet(convExpr lvalueExpr, convExpr rvalueExpr)
+        | BasicPatterns.AddressSet(lvalueExpr, rvalueExpr) -> 
+            DExpr.AddressSet(convExpr lvalueExpr, convExpr rvalueExpr)
 
         // FCS TODO: fix FCS quirk with IsNone and IsSome on the option type
         | BasicPatterns.Application( BasicPatterns.Call(Some obj, memberOrFunc, tyargs1, tyargs2, [ ]), typeArgs, [ arg ]) when memberOrFunc.CompiledName = "get_IsNone" || memberOrFunc.CompiledName = "get_IsSome"  -> 
@@ -32,7 +34,9 @@ type Convert(includeRanges: bool) =
             let rangeR = convRange expr.Range
             DExpr.Call(None, mrefR, typeArgs1R, typeArgs2R, [| objExprR |], rangeR)
 
-        | BasicPatterns.Application(funcExpr, typeArgs, argExprs) -> DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs)
+        | BasicPatterns.Application(funcExpr, typeArgs, argExprs) -> 
+            let rangeR = convRange expr.Range
+            DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs, rangeR)
 
         | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
@@ -47,83 +51,128 @@ type Convert(includeRanges: bool) =
                 DExpr.Call(None, mrefR, typeArgs1R, typeArgs2R, Array.append [| objExprR |] argExprsR, rangeR)
             | _ -> 
                 DExpr.Call(objExprOptR, mrefR, typeArgs1R, typeArgs2R, argExprsR, rangeR)
-        | BasicPatterns.Coerce(targetType, inpExpr) -> DExpr.Coerce(convType targetType, convExpr inpExpr)
 
-        | BasicPatterns.FastIntegerForLoop(startExpr, limitExpr, consumeExpr, isUp) -> DExpr.FastIntegerForLoop(convExpr startExpr, convExpr limitExpr, convExpr consumeExpr, isUp)
+        | BasicPatterns.Coerce(targetType, inpExpr) -> 
+            DExpr.Coerce(convType targetType, convExpr inpExpr)
 
-        | BasicPatterns.ILAsm(asmCode, typeArgs, argExprs) -> DExpr.ILAsm(asmCode, convTypes typeArgs, convExprs argExprs)
+        | BasicPatterns.FastIntegerForLoop(startExpr, limitExpr, consumeExpr, isUp) -> 
+            DExpr.FastIntegerForLoop(convExpr startExpr, convExpr limitExpr, convExpr consumeExpr, isUp)
 
-        | BasicPatterns.ILFieldGet (objExprOpt, fieldType, fieldName) -> DExpr.ILFieldGet(convExprOpt objExprOpt, convType fieldType, fieldName)
+        | BasicPatterns.ILAsm(asmCode, typeArgs, argExprs) -> 
+            DExpr.ILAsm(asmCode, convTypes typeArgs, convExprs argExprs)
 
-        | BasicPatterns.ILFieldSet (objExprOpt, fieldType, fieldName, valueExpr) -> DExpr.ILFieldSet (convExprOpt objExprOpt, convType fieldType, fieldName, convExpr valueExpr)
+        | BasicPatterns.ILFieldGet (objExprOpt, fieldType, fieldName) -> 
+            DExpr.ILFieldGet(convExprOpt objExprOpt, convType fieldType, fieldName)
 
-        | BasicPatterns.IfThenElse (guardExpr, thenExpr, elseExpr) -> DExpr.IfThenElse (convExpr guardExpr, convExpr thenExpr, convExpr elseExpr)
+        | BasicPatterns.ILFieldSet (objExprOpt, fieldType, fieldName, valueExpr) -> 
+            DExpr.ILFieldSet (convExprOpt objExprOpt, convType fieldType, fieldName, convExpr valueExpr)
 
-        | BasicPatterns.Lambda(lambdaVar, bodyExpr) -> DExpr.Lambda(convType lambdaVar.FullType, convType bodyExpr.Type, convLocalDef lambdaVar, convExpr bodyExpr)
+        | BasicPatterns.IfThenElse (guardExpr, thenExpr, elseExpr) -> 
+            DExpr.IfThenElse (convExpr guardExpr, convExpr thenExpr, convExpr elseExpr)
 
-        | BasicPatterns.Let((bindingVar, bindingExpr), bodyExpr) -> DExpr.Let((convLocalDef bindingVar, convExpr bindingExpr), convExpr bodyExpr)
+        | BasicPatterns.Lambda(lambdaVar, bodyExpr) -> 
+            DExpr.Lambda(convType lambdaVar.FullType, convType bodyExpr.Type, convLocalDef lambdaVar, convExpr bodyExpr)
 
-        | BasicPatterns.LetRec(recursiveBindings, bodyExpr) -> DExpr.LetRec(List.mapToArray (map2 convLocalDef convExpr) recursiveBindings, convExpr bodyExpr)
+        | BasicPatterns.Let((bindingVar, bindingExpr), bodyExpr) -> 
+            DExpr.Let((convLocalDef bindingVar, convExpr bindingExpr), convExpr bodyExpr)
 
-        | BasicPatterns.NewArray(arrayType, argExprs) -> DExpr.NewArray(convType arrayType, convExprs argExprs)
+        | BasicPatterns.LetRec(recursiveBindings, bodyExpr) -> 
+            DExpr.LetRec(List.mapToArray (map2 convLocalDef convExpr) recursiveBindings, convExpr bodyExpr)
 
-        | BasicPatterns.NewDelegate(delegateType, delegateBodyExpr) -> DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
+        | BasicPatterns.NewArray(arrayType, argExprs) -> 
+            DExpr.NewArray(convType arrayType, convExprs argExprs)
 
-        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs)
+        | BasicPatterns.NewDelegate(delegateType, delegateBodyExpr) -> 
+            DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
-        | BasicPatterns.NewRecord(recordType, argExprs) ->  DExpr.NewRecord(convType recordType, convExprs argExprs)
+        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> 
+            DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs)
 
-        | BasicPatterns.NewTuple(tupleType, argExprs) -> DExpr.NewTuple(convType tupleType, convExprs argExprs)
+        | BasicPatterns.NewRecord(recordType, argExprs) -> 
+            DExpr.NewRecord(convType recordType, convExprs argExprs)
 
-        | BasicPatterns.NewUnionCase(unionType, unionCase, argExprs) -> DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs)
+        | BasicPatterns.NewTuple(tupleType, argExprs) -> 
+            DExpr.NewTuple(convType tupleType, convExprs argExprs)
 
-        | BasicPatterns.Quote(quotedExpr) -> DExpr.Quote(convExpr quotedExpr)
+        | BasicPatterns.NewUnionCase(unionType, unionCase, argExprs) -> 
+            DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs)
 
-        | BasicPatterns.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> DExpr.FSharpFieldGet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo)
+        | BasicPatterns.Quote(quotedExpr) -> 
+            DExpr.Quote(convExpr quotedExpr)
 
-        | BasicPatterns.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr)
+        | BasicPatterns.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
+            DExpr.FSharpFieldGet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo)
 
-        | BasicPatterns.Sequential(firstExpr, secondExpr) -> DExpr.Sequential(convExpr firstExpr, convExpr secondExpr)
+        | BasicPatterns.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> 
+            DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr)
 
-        | BasicPatterns.TryFinally(bodyExpr, finalizeExpr) -> DExpr.TryFinally(convExpr bodyExpr, convExpr finalizeExpr)
+        | BasicPatterns.Sequential(firstExpr, secondExpr) -> 
+            DExpr.Sequential(convExpr firstExpr, convExpr secondExpr)
 
-        | BasicPatterns.TryWith(bodyExpr, filterVar, filterExpr, catchVar, catchExpr) -> DExpr.TryWith(convExpr bodyExpr, convLocalDef filterVar, convExpr filterExpr, convLocalDef catchVar, convExpr catchExpr)
+        | BasicPatterns.TryFinally(bodyExpr, finalizeExpr) -> 
+            DExpr.TryFinally(convExpr bodyExpr, convExpr finalizeExpr)
 
-        | BasicPatterns.TupleGet(tupleType, tupleElemIndex, tupleExpr) -> DExpr.TupleGet(convType tupleType, tupleElemIndex, convExpr tupleExpr)
+        | BasicPatterns.TryWith(bodyExpr, filterVar, filterExpr, catchVar, catchExpr) -> 
+            DExpr.TryWith(convExpr bodyExpr, convLocalDef filterVar, convExpr filterExpr, convLocalDef catchVar, convExpr catchExpr)
 
-        | BasicPatterns.DecisionTree(decisionExpr, decisionTargets) -> DExpr.DecisionTree(convExpr decisionExpr, List.mapToArray (map2 (List.mapToArray convLocalDef) convExpr) decisionTargets)
+        | BasicPatterns.TupleGet(tupleType, tupleElemIndex, tupleExpr) -> 
+            DExpr.TupleGet(convType tupleType, tupleElemIndex, convExpr tupleExpr)
 
-        | BasicPatterns.DecisionTreeSuccess (decisionTargetIdx, decisionTargetExprs) -> DExpr.DecisionTreeSuccess (decisionTargetIdx, convExprs decisionTargetExprs)
+        | BasicPatterns.DecisionTree(decisionExpr, decisionTargets) -> 
+            DExpr.DecisionTree(convExpr decisionExpr, List.mapToArray (map2 (List.mapToArray convLocalDef) convExpr) decisionTargets)
 
-        | BasicPatterns.TypeLambda(genericParams, bodyExpr) -> DExpr.TypeLambda(Array.map convGenericParamDef (Array.ofList genericParams), convExpr bodyExpr)
+        | BasicPatterns.DecisionTreeSuccess (decisionTargetIdx, decisionTargetExprs) -> 
+            DExpr.DecisionTreeSuccess (decisionTargetIdx, convExprs decisionTargetExprs)
 
-        | BasicPatterns.TypeTest(ty, inpExpr) -> DExpr.TypeTest(convType ty, convExpr inpExpr)
+        | BasicPatterns.TypeLambda(genericParams, bodyExpr) -> 
+            DExpr.TypeLambda(Array.map convGenericParamDef (Array.ofList genericParams), convExpr bodyExpr)
 
-        | BasicPatterns.UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> DExpr.UnionCaseSet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField, convExpr valueExpr)
+        | BasicPatterns.TypeTest(ty, inpExpr) -> 
+            DExpr.TypeTest(convType ty, convExpr inpExpr)
 
-        | BasicPatterns.UnionCaseGet(unionExpr, unionType, unionCase, unionCaseField) -> DExpr.UnionCaseGet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField)
+        | BasicPatterns.UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> 
+            DExpr.UnionCaseSet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField, convExpr valueExpr)
 
-        | BasicPatterns.UnionCaseTest(unionExpr, unionType, unionCase) -> DExpr.UnionCaseTest(convExpr unionExpr, convType unionType, convUnionCase unionCase)
+        | BasicPatterns.UnionCaseGet(unionExpr, unionType, unionCase, unionCaseField) -> 
+            DExpr.UnionCaseGet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField)
 
-        | BasicPatterns.UnionCaseTag(unionExpr, unionType) -> DExpr.UnionCaseTag(convExpr unionExpr, convType unionType)
+        | BasicPatterns.UnionCaseTest(unionExpr, unionType, unionCase) -> 
+            DExpr.UnionCaseTest(convExpr unionExpr, convType unionType, convUnionCase unionCase)
 
-        | BasicPatterns.ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> DExpr.ObjectExpr(convType objType, convExpr baseCallExpr, Array.map convObjMemberDef (Array.ofList overrides), Array.map (map2 convType (Array.ofList >> Array.map convObjMemberDef)) (Array.ofList interfaceImplementations))
+        | BasicPatterns.UnionCaseTag(unionExpr, unionType) -> 
+            DExpr.UnionCaseTag(convExpr unionExpr, convType unionType)
 
-        | BasicPatterns.TraitCall(sourceTypes, traitName, memberFlags, typeInstantiation, argTypes, argExprs) -> DExpr.TraitCall(convTypes sourceTypes, traitName, memberFlags.IsInstance, convTypes typeInstantiation, convTypes argTypes, convExprs argExprs)
+        | BasicPatterns.ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> 
+            DExpr.ObjectExpr(convType objType, convExpr baseCallExpr, Array.map convObjMemberDef (Array.ofList overrides), Array.map (map2 convType (Array.ofList >> Array.map convObjMemberDef)) (Array.ofList interfaceImplementations))
 
-        | BasicPatterns.ValueSet(valToSet, valueExpr) -> DExpr.ValueSet(convLocalRef expr.Range valToSet, convExpr valueExpr)
+        | BasicPatterns.TraitCall(sourceTypes, traitName, memberFlags, typeInstantiation, argTypes, argExprs) -> 
+            DExpr.TraitCall(convTypes sourceTypes, traitName, memberFlags.IsInstance, convTypes typeInstantiation, convTypes argTypes, convExprs argExprs, convRange expr.Range)
 
-        | BasicPatterns.WhileLoop(guardExpr, bodyExpr) -> DExpr.WhileLoop(convExpr guardExpr, convExpr bodyExpr)
+        | BasicPatterns.ValueSet(valToSet, valueExpr) -> 
+            let valToSetR = 
+                if valToSet.IsModuleValueOrMember then 
+                    Choice2Of2 (convMemberRef valToSet)
+                else
+                    Choice1Of2 (convLocalRef expr.Range valToSet)
+            DExpr.ValueSet(valToSetR, convExpr valueExpr)
 
-        | BasicPatterns.BaseValue baseType -> DExpr.BaseValue (convType baseType)
+        | BasicPatterns.WhileLoop(guardExpr, bodyExpr) -> 
+            DExpr.WhileLoop(convExpr guardExpr, convExpr bodyExpr)
 
-        | BasicPatterns.DefaultValue defaultType -> DExpr.DefaultValue (convType defaultType)
+        | BasicPatterns.BaseValue baseType -> 
+            DExpr.BaseValue (convType baseType)
 
-        | BasicPatterns.ThisValue thisType -> DExpr.ThisValue (convType thisType)
+        | BasicPatterns.DefaultValue defaultType -> 
+            DExpr.DefaultValue (convType defaultType)
 
-        | BasicPatterns.Const(constValueObj, constType) -> DExpr.Const (constValueObj, convType constType) 
+        | BasicPatterns.ThisValue thisType -> 
+            DExpr.ThisValue (convType thisType)
 
-        | BasicPatterns.Value(valueToGet) ->  DExpr.Value(convLocalRef expr.Range valueToGet)
+        | BasicPatterns.Const(constValueObj, constType) -> 
+            DExpr.Const (constValueObj, convType constType) 
+
+        | BasicPatterns.Value(valueToGet) ->
+            DExpr.Value(convLocalRef expr.Range valueToGet)
 
         | _ -> failwith (sprintf "unrecognized %+A at %A" expr expr.Range)
 
@@ -178,6 +227,7 @@ type Convert(includeRanges: bool) =
           Parameters = convParamDefs memb
           ReturnType = convReturnType memb
           IsInstance = memb.IsInstanceMemberInCompiledCode
+          IsValue = memb.IsValue
           Range = convRange memb.DeclarationLocation}
 
     and convMemberRef (memb: FSharpMemberOrFunctionOrValue) = 
@@ -286,14 +336,20 @@ type Convert(includeRanges: bool) =
                    let eR = try convEntityDef e with exn -> failwithf "error converting entity %s\n%A" e.CompiledName exn
                    let declsR = convDecls subDecls
                    yield DDeclEntity (eR, declsR) 
+
            | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(v, vs, e) -> 
+               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName = "LiveCheckAttribute")
+               if isLiveCheck then 
+                   printfn "member %s is a LiveCheck!" v.LogicalName
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods
-               if not v.IsCompilerGenerated then
+               if not v.IsCompilerGenerated || not v.IsMember then
                    let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
                    let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
-                   yield DDeclMember (vR, eR)
+                   yield DDeclMember (vR, eR, isLiveCheck)
+
            | FSharpImplementationFileDeclaration.InitAction(e) -> 
                yield DDecl.InitAction (convExpr e, convRange e.Range) |]
+
     and convDecls decls = 
         decls |> Array.ofList |> Array.collect convDecl 
 
