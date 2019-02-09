@@ -208,6 +208,7 @@ let ProcessCommandLine (argv: string[]) =
     let clearInfoFile sourceFile = 
         emitInfoFile sourceFile [| |]
 
+    /// Format values resulting from live checking using the interpreter
     let rec formatValue (value: obj) = 
         match value with 
         | null -> "<null>"
@@ -220,6 +221,8 @@ let ProcessCommandLine (argv: string[]) =
         elif Reflection.FSharpType.IsTuple(ty) then 
             let vs = Reflection.FSharpValue.GetTupleFields(value)
             "(" + String.concat "," (Array.map formatValue vs) + ")"
+        elif Reflection.FSharpType.IsFunction(ty) then 
+            "<func>"
         elif ty.IsArray then 
             let value = (value :?> Array)
             if ty.GetArrayRank() = 1 then 
@@ -233,26 +236,41 @@ let ProcessCommandLine (argv: string[]) =
         elif Reflection.FSharpType.IsUnion(ty) then 
             let uc, vs = Reflection.FSharpValue.GetUnionFields(value, ty)
             uc.Name + "(" + String.concat ", " [| for v in vs -> formatValue v |] + ")"
+        elif value :? System.Collections.IEnumerable then 
+            "<seq>"
         else 
             value.ToString() //"unknown value"
 
-    /// Write an info file containing extra information to make available to F# tooling
-    let writeInfoFile (tooltips: (DRange * string * obj)[]) sourceFile errors = 
+    /// Write an info file containing extra information to make available to F# tooling.
+    /// This is currently experimental and only experimental additions to F# tooling
+    /// watch and consume this information.
+    let writeInfoFile (tooltips: (DRange * (string * obj) list)[]) sourceFile errors = 
 
         let lines = 
             let ranges =  HashSet<_>()
-            [| for (range, action, value) in tooltips do
-                    // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
-                    let valueText = formatValue value
-                    let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
-                    let valueText = 
-                        if valueText.Length > 50 then 
-                            valueText.[0 .. 50] + "..."
-                        else   
-                            valueText
-                    let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck: %s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn (if action = "" then "" else action + " ") valueText
-                    if not (ranges.Contains(line)) then 
-                        ranges.Add(line) |> ignore
+            [| for (range, lines) in tooltips do
+
+                    // Only emit one line for each range. If live checks are performed twice only
+                    // the first is currently shown.
+                    if not (ranges.Contains(range)) then 
+                        ranges.Add(range) |> ignore
+
+                        // Format multiple lines of text into a single line in the output file
+                        let valuesText = 
+                            [ for (action, value) in lines do 
+                                  let action = (if action = "" then "" else action + " ")
+                                  let valueText = formatValue value
+                                  let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                                  let valueText = 
+                                      if valueText.Length > 50 then 
+                                          valueText.[0 .. 50] + "..."
+                                      else   
+                                          valueText
+                                  yield action + valueText ]
+                            |> String.concat "~   " // special new-line character known by experimental VS tooling + indent
+                    
+                        let sep = (if lines.Length = 1 then " " else "~   ")
+                        let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
                         yield line
 
                for (exn:exn, rangeStack) in errors do 
@@ -264,6 +282,7 @@ let ProcessCommandLine (argv: string[]) =
 
         emitInfoFile sourceFile lines
 
+    /// Evaluate the declarations using the interpreter
     let evaluateDecls fileContents = 
         let assemblyTable = 
             dict [| for r in options.OtherOptions do 
@@ -282,20 +301,30 @@ let ProcessCommandLine (argv: string[]) =
             | true, res -> res
             | _ -> Reflection.Assembly.Load(nm)
                                         
-        let bindings = ResizeArray()
-        let uses = ResizeArray()
+        let tooltips = ResizeArray()
         let sink =
             if writeinfo then 
                 { new Sink with 
-                     member __.CallAndReturn(x, _typeArgs, args, res) = 
-                         x.Range |> Option.iter (fun r -> 
-                             for (i, arg) in Array.indexed args do 
-                                bindings.Add ((r, sprintf "arg %d" i, arg))
-                             bindings.Add ((r, "return", res.Value)))
-                     member __.BindValue(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
-                     member __.BindLocal(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
-                     member __.UseLocal(x, value) = x.Range |> Option.iter (fun r -> bindings.Add ((r, "", value.Value)))
-                     }
+                     member __.CallAndReturn(mdef, _typeArgs, args, res) = 
+                         mdef.Range |> Option.iter (fun r -> 
+                             let lines = 
+                                 [ for (p, arg) in Seq.zip mdef.Parameters args do 
+                                       yield (sprintf "%s:" p.Name, arg)
+                                   if mdef.IsValue then 
+                                       yield ("value:", res.Value)
+                                   else
+                                       yield ("return:", res.Value) ]
+                             tooltips.Add(r, lines))
+
+                     member __.BindValue(vdef, value) = 
+                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+
+                     member __.BindLocal(vdef, value) = 
+                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+
+                     member __.UseLocal(vref, value) = 
+                         vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+                }
                 |> Some
             else  
                 None
@@ -311,7 +340,7 @@ let ProcessCommandLine (argv: string[]) =
             let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livechecksonly)
 
             if writeinfo then 
-                writeInfoFile (bindings.ToArray()) sourceFile errors
+                writeInfoFile (tooltips.ToArray()) sourceFile errors
             else
                 for (exn, _range) in errors do
                    raise exn
