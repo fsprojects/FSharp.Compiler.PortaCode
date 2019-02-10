@@ -5,6 +5,8 @@ The PortaCode F# code format and corresponding interpreter.
 
 * Currently distributed by source inclusion, no nuget package yet
 
+* FsLive.Cli is a live programming "watch my project" command line tool which is experimental
+
 * Wet paint, API will change
 
 It's used for the "LiveUpdate" feature of Fabulous, to interpret the Elmish model/view/update application code on-device.
