@@ -110,7 +110,7 @@ let ProcessCommandLine (argv: string[]) =
                         printfn "%s" (error.ToString())
                     Result.Error ()
                 else                                
-                    let options = { options with SourceFiles = sourceFiles }
+                    //let options = { options with SourceFiles = sourceFiles }
                     Result.Ok options
             | _ -> 
                 let options = checker.GetProjectOptionsFromCommandLineArgs("tmp.fsproj", otherFlags)
@@ -212,7 +212,7 @@ let ProcessCommandLine (argv: string[]) =
     let rec formatValue (value: obj) = 
         match value with 
         | null -> "<null>"
-        //| :? int -> ""
+        | :? string as s -> sprintf "%A" s
         | value -> 
         let ty = value.GetType()
         if ty.Name = "DT`1" then 

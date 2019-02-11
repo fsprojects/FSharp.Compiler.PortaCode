@@ -575,7 +575,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 yield! ctxt.TryEvalDecls(env, subDecls, evalLiveChecksOnly=evalLiveChecksOnly)
 
             | DDeclMember (membDef, body, isLiveCheck) -> 
-                if membDef.IsValueDef && (not evalLiveChecksOnly || isLiveCheck) then 
+                if (membDef.IsValueDef && not evalLiveChecksOnly) || 
+                   (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0)) then 
                     let ty = ResolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.TryEvalExpr (env, body, membDef.Range)
                     match res with 
