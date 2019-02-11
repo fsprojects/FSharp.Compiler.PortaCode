@@ -236,7 +236,7 @@ type Convert(includeRanges: bool) =
 
         // TODO: extensions of generic type
         if memb.IsExtensionMember && memb.ApparentEnclosingEntity.GenericParameters.Count > 0 && not (memb.CompiledName = "ProgramRunner`2.EnableLiveUpdate") then 
-           failwithf "NYI: extension of generic type, needs FCS support: %s" memb.CompiledName
+           failwithf "NYI: extension of generic type, needs FCS support: %A::%A" memb.ApparentEnclosingEntity memb
 
         DMemberRef (convEntityRef memb.DeclaringEntity.Value, memb.CompiledName, memb.GenericParameters.Count, paramTypesR, convReturnType memb)
 
