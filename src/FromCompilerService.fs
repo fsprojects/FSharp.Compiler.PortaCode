@@ -232,7 +232,8 @@ type Convert(includeRanges: bool) =
           ReturnType = convReturnType memb
           IsInstance = memb.IsInstanceMemberInCompiledCode
           IsValue = memb.IsValue
-          Range = convRange memb.DeclarationLocation}
+          Range = convRange memb.DeclarationLocation
+          IsCompilerGenerated = memb.IsCompilerGenerated }
 
     and convMemberRef (memb: FSharpMemberOrFunctionOrValue) range = 
         if not (memb.IsMember || memb.IsModuleValueOrMember) then failwith "can't convert non-member ref"

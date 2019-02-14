@@ -77,6 +77,7 @@ and DMemberDef =
       GenericParameters: DGenericParameterDef[]
       IsInstance: bool
       IsValue: bool
+      IsCompilerGenerated: bool
       Parameters: DLocalDef[]
       ReturnType: DType
       Range: DRange option }

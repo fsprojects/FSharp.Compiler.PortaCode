@@ -336,7 +336,8 @@ let ProcessCommandLine (argv: string[]) =
                              tooltips.Add(r, lines, true))
 
                      member __.BindValue(vdef, value) = 
-                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                         if not vdef.IsCompilerGenerated then 
+                             vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
                      member __.BindLocal(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
