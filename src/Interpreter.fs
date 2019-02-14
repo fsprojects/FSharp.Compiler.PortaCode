@@ -95,7 +95,7 @@ let (|RTypesOrObj|) xR = match xR with RTypes xV -> xV | UTypes us -> Array.map 
 type Sink = 
 
     /// Called whenever a call is completed
-    abstract CallAndReturn: DMemberDef * Type[] * obj[] * Value -> unit
+    abstract CallAndReturn: DMemberRef * DMemberDef * Type[] * obj[] * Value -> unit
 
     /// Called whenever a value in a module is computed
     abstract BindValue: DMemberDef * Value -> unit
@@ -108,7 +108,7 @@ type Sink =
 
 let emptySink = 
     { new Sink with 
-          member __.CallAndReturn(_,_,_,_) = ()
+          member __.CallAndReturn(_,_,_,_,_) = ()
           member __.BindValue(_,_) = ()
           member __.BindLocal(_,_) = ()
           member __.UseLocal(_,_) = () }
@@ -251,9 +251,10 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
     let sink = defaultArg sink emptySink
     let members = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),(DMemberDef * Value)>(HashIdentity.Structural)
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
+    // TODO: add these resolution tables
     //let unionCaseResolutions = ConcurrentDictionary<(DType * DUnionCaseRef),ResolvedUnionCase>(HashIdentity.Structural)
     //let fieldResolutions = ConcurrentDictionary<(DType * DFieldRef),ResolvedField>(HashIdentity.Structural)
-    //let methodResolutions = ConcurrentDictionary<DMemberRef,ResolvedMember>(HashIdentity.Structural)
+    //let methodResolutions = ConcurrentDictionary<...,ResolvedMember>(HashIdentity.Structural)
     let methinfoof q = match q with Quotations.DerivedPatterns.Lambdas(_, Quotations.Patterns.Call(_,minfo,_)) -> minfo.GetGenericMethodDefinition() | _ -> failwith "unexpected"
     let op_double = methinfoof <@ double @> 
     let op_single = methinfoof <@ single @> 
@@ -489,37 +490,36 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 
     /// Resolve a method name to a lambda value
     let ResolveMethod(v: DMemberRef) = 
-        let (DMemberRef(entity, nm, genericParams, paramTys, _retTy)) = v
         // TODO: create formal type environment to help resolve overloading by type
         let formalEnv = envEmpty 
-        match ResolveEntity entity with 
+        match ResolveEntity v.Entity with 
         | REntity entityType as eR -> 
-            let n = paramTys.Length
-            if nm = ".ctor" || nm = ".cctor" then 
-                match entityType.GetConstructors(bindAll) |> Array.filter (fun m -> m.Name = nm && m.GetParameters().Length = n) with 
+            let n = v.ArgTypes.Length
+            if v.Name = ".ctor" || v.Name = ".cctor" then 
+                match entityType.GetConstructors(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
                 | [| cinfo |] -> RMethod cinfo
                 | _res -> 
-                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, paramTys)
+                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, v.ArgTypes)
                     match entityType.GetConstructor(bindAll, null, paramTysV, null) with 
                     | null -> failwithf "couldn't bind constructor %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | cinfo -> RMethod cinfo
             else
-                match entityType.GetMethods(bindAll) |> Array.filter (fun m -> m.Name = nm && m.GetParameters().Length = n) with 
+                match entityType.GetMethods(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
                 | [| minfo |] -> MakeRMethod minfo
-                | [| |] when n = 0 && genericParams = 0 -> 
+                | [| |] when n = 0 && v.GenericArity = 0 -> 
                     // FCS QUIRK TODO: cleanup FCS and portacode so names of properties are never used
-                    match entityType.GetProperty(nm, bindAll) with 
+                    match entityType.GetProperty(v.Name, bindAll) with 
                     | null -> failwithf "couldn't bind method %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     //| null -> ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | pinfo  -> MakeRMethod pinfo.GetMethod
                 | _res -> 
-                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, paramTys)
-                    match entityType.GetMethod(nm, bindAll, null, paramTysV, null) with 
+                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, v.ArgTypes)
+                    match entityType.GetMethod(v.Name, bindAll, null, paramTysV, null) with 
                     | null -> failwithf "couldn't bind property %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     //| null -> ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | minfo -> RMethod minfo
         | eR -> 
-            InterpMethod(formalEnv, eR, nm, paramTys)
+            InterpMethod(formalEnv, eR, v.Name, v.ArgTypes)
 
     /// Add the declarations for the types and methods
     member ctxt.AddDecls(decls: DDecl[]) = 
@@ -759,9 +759,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | _ -> failwithf "didn't find mutable value in the environment to write" 
 
             | Choice2Of2 mref -> 
-                let (DMemberRef(entity, nm, genericParams, paramTys, _retTy)) = mref
-                let entityR = ResolveEntity entity 
-                let key = (entityR, nm, RTypes [| |])
+                let entityR = ResolveEntity mref.Entity
+                let key = (entityR, mref.Name, RTypes [| |])
                 if not (members.ContainsKey(key)) then failwithf "No member found for key %A" key
                 let membDef, _ = members.[key]
                 members.[key] <- (membDef, Value valueExprV)
@@ -832,7 +831,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         | UMethod (membDef, Value (:? MethodLambdaValue as fM )), RTypesOrObj typeArgsV -> 
             let (MethodLambdaValue f) = fM
             let res = f (typeArgsV, argsV) |> Value
-            sink.CallAndReturn(membDef, typeArgsV, argsV, res)
+            sink.CallAndReturn(objCtor, membDef, typeArgsV, argsV, res)
             res
         | _ -> 
             failwithf "unexpected constructor %A at types %A" methR typeArgsR
@@ -975,7 +974,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             let callArgsV = (match objOptV with null -> argsV | objV -> Array.append [| objV |] argsV)
             let callTypeArgsV = Array.append typeArgs1V typeArgs2V
             let res = f (callTypeArgsV, callArgsV) |> Value
-            sink.CallAndReturn(membDef, callTypeArgsV, argsV, res)
+            sink.CallAndReturn(memberOrFunc, membDef, callTypeArgsV, argsV, res)
             res
 
         | UMethod (_membDef, Value v), RTypes [| |], RTypes [| |] when argExprs.Length = 0 -> 

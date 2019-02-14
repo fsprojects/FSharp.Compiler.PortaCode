@@ -65,7 +65,11 @@ and DType =
     | DVariableType of string
 
 and DLocalDef = 
-    { Name: string; IsMutable: bool; Type: DType; Range: DRange option; IsCompilerGenerated: bool }
+    { Name: string
+      IsMutable: bool
+      Type: DType
+      Range: DRange option
+      IsCompilerGenerated: bool }
 
 and DMemberDef = 
     { EnclosingEntity: DEntityRef
@@ -77,27 +81,48 @@ and DMemberDef =
       ReturnType: DType
       Range: DRange option }
 
-    member x.Ref = DMemberRef (x.EnclosingEntity, x.Name, x.GenericParameters.Length, (x.Parameters |> Array.map (fun p -> p.Type)), x.ReturnType)
+    member x.Ref = 
+        { Entity=x.EnclosingEntity
+          Name= x.Name
+          GenericArity = x.GenericParameters.Length 
+          ArgTypes = (x.Parameters |> Array.map (fun p -> p.Type)) 
+          ReturnType = x.ReturnType 
+          Range = x.Range }
 
 and DGenericParameterDef = 
     { Name: string }
 
 and DEntityDef = 
-    { Name: string; GenericParameters: DGenericParameterDef[]; UnionCases: string[]; Range: DRange option }
+    { Name: string
+      GenericParameters: DGenericParameterDef[]
+      UnionCases: string[]
+      Range: DRange option }
 
 and DEntityRef = DEntityRef of string 
 
-and DMemberRef = DMemberRef of DEntityRef * string * int * DType[] * DType
+and DMemberRef = 
+    { Entity: DEntityRef 
+      Name: string
+      GenericArity: int 
+      ArgTypes: DType[] 
+      ReturnType: DType 
+      Range: DRange option }
 
 and DLocalRef = 
-    { Name: string; IsThisValue: bool; IsMutable: bool; Range: DRange option }
+    { Name: string
+      IsThisValue: bool
+      IsMutable: bool
+      Range: DRange option }
 
 and DFieldRef = DFieldRef of int * string
 
 and DUnionCaseRef = DUnionCaseRef of string
 
 and DObjectExprOverrideDef =  
-    { Name: string; GenericParameters: DGenericParameterDef[]; Parameters: DLocalDef[]; Body: DExpr }
+    { Name: string
+      GenericParameters: DGenericParameterDef[]
+      Parameters: DLocalDef[]
+      Body: DExpr }
 
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]

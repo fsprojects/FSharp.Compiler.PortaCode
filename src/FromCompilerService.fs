@@ -28,7 +28,7 @@ type Convert(includeRanges: bool) =
         // FCS TODO: fix FCS quirk with IsNone and IsSome on the option type
         | BasicPatterns.Application( BasicPatterns.Call(Some obj, memberOrFunc, tyargs1, tyargs2, [ ]), typeArgs, [ arg ]) when memberOrFunc.CompiledName = "get_IsNone" || memberOrFunc.CompiledName = "get_IsSome"  -> 
             let objExprR = convExpr obj
-            let mrefR = convMemberRef memberOrFunc
+            let mrefR = convMemberRef memberOrFunc expr.Range
             let typeArgs1R = convTypes tyargs1
             let typeArgs2R = convTypes tyargs2
             let rangeR = convRange expr.Range
@@ -40,7 +40,7 @@ type Convert(includeRanges: bool) =
 
         | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
-            let mrefR = convMemberRef memberOrFunc
+            let mrefR = convMemberRef memberOrFunc expr.Range
             let typeArgs1R = convTypes typeArgs1
             let typeArgs2R = convTypes typeArgs2
             let argExprsR = convArgExprs memberOrFunc argExprs
@@ -86,7 +86,7 @@ type Convert(includeRanges: bool) =
             DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
         | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> 
-            DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs)
+            DExpr.NewObject(convMemberRef objCtor  expr.Range, convTypes typeArgs, convArgExprs objCtor argExprs)
 
         | BasicPatterns.NewRecord(recordType, argExprs) -> 
             DExpr.NewRecord(convType recordType, convExprs argExprs)
@@ -151,7 +151,7 @@ type Convert(includeRanges: bool) =
         | BasicPatterns.ValueSet(valToSet, valueExpr) -> 
             let valToSetR = 
                 if valToSet.IsModuleValueOrMember then 
-                    Choice2Of2 (convMemberRef valToSet)
+                    Choice2Of2 (convMemberRef valToSet expr.Range)
                 else
                     Choice1Of2 (convLocalRef expr.Range valToSet)
             DExpr.ValueSet(valToSetR, convExpr valueExpr)
@@ -211,7 +211,11 @@ type Convert(includeRanges: bool) =
         else None
 
     and convLocalDef (value: FSharpMemberOrFunctionOrValue) : DLocalDef = 
-        { Name = value.CompiledName; IsMutable = value.IsMutable; Type = convType value.FullType; Range = convRange value.DeclarationLocation; IsCompilerGenerated=value.IsCompilerGenerated }
+        { Name = value.CompiledName
+          IsMutable = value.IsMutable
+          Type = convType value.FullType
+          Range = convRange value.DeclarationLocation
+          IsCompilerGenerated=value.IsCompilerGenerated }
 
     and convLocalRef range (value: FSharpMemberOrFunctionOrValue) : DLocalRef = 
         { Name = value.CompiledName
@@ -230,7 +234,7 @@ type Convert(includeRanges: bool) =
           IsValue = memb.IsValue
           Range = convRange memb.DeclarationLocation}
 
-    and convMemberRef (memb: FSharpMemberOrFunctionOrValue) = 
+    and convMemberRef (memb: FSharpMemberOrFunctionOrValue) range = 
         if not (memb.IsMember || memb.IsModuleValueOrMember) then failwith "can't convert non-member ref"
         let paramTypesR = convParamTypes memb
 
@@ -238,7 +242,12 @@ type Convert(includeRanges: bool) =
         if memb.IsExtensionMember && memb.ApparentEnclosingEntity.GenericParameters.Count > 0 && not (memb.CompiledName = "ProgramRunner`2.EnableLiveUpdate") then 
            failwithf "NYI: extension of generic type, needs FCS support: %A::%A" memb.ApparentEnclosingEntity memb
 
-        DMemberRef (convEntityRef memb.DeclaringEntity.Value, memb.CompiledName, memb.GenericParameters.Count, paramTypesR, convReturnType memb)
+        { Entity=convEntityRef memb.DeclaringEntity.Value
+          Name= memb.CompiledName
+          GenericArity = memb.GenericParameters.Count
+          ArgTypes = paramTypesR 
+          ReturnType = convReturnType memb 
+          Range = convRange range }
 
     and convParamTypes (memb: FSharpMemberOrFunctionOrValue) =
         let parameters = memb.CurriedParameterGroups 

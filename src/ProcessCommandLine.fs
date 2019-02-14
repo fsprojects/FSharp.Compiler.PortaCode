@@ -241,18 +241,35 @@ let ProcessCommandLine (argv: string[]) =
         else 
             value.ToString() //"unknown value"
 
+    let MAXTOOLTIP = 100
     /// Write an info file containing extra information to make available to F# tooling.
     /// This is currently experimental and only experimental additions to F# tooling
     /// watch and consume this information.
-    let writeInfoFile (tooltips: (DRange * (string * obj) list)[]) sourceFile errors = 
+    let writeInfoFile (tooltips: (DRange * (string * obj) list * bool)[]) sourceFile errors = 
 
         let lines = 
-            let ranges =  HashSet<_>()
-            [| for (range, lines) in tooltips do
+            let ranges =  HashSet<DRange>(HashIdentity.Structural)
+            let havePreferred = tooltips |> Array.choose (fun (m,_,prefer) -> if prefer then Some m else None) |> Set.ofArray
+            [| for (range, lines, prefer) in tooltips do
+                    
 
                     // Only emit one line for each range. If live checks are performed twice only
-                    // the first is currently shown.
-                    if not (ranges.Contains(range)) then 
+                    // the first is currently shown.  
+                    //
+                    // We have a hack here to prefer some entries over others.  FCS returns non-compiler-generated
+                    // locals for curried functions like 
+                    //     a |> ... |> foo1 
+                    // or
+                    //     a |> ... |> foo2 x
+                    //
+                    // which become 
+                    //     a |> ... |> (fun input -> foo input)
+                    //     a |> ... |> (fun input -> foo2 x input
+                    // but here a use is reported for "input" over the range of the application expression "foo1" or "foo2 x"
+                    // So we prefer the actual call over these for these ranges.
+                    //
+                    // TODO: report this FCS problem and fix it.
+                    if not (ranges.Contains(range))  && (prefer || not (havePreferred.Contains range)) then 
                         ranges.Add(range) |> ignore
 
                         // Format multiple lines of text into a single line in the output file
@@ -262,8 +279,8 @@ let ProcessCommandLine (argv: string[]) =
                                   let valueText = formatValue value
                                   let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
                                   let valueText = 
-                                      if valueText.Length > 50 then 
-                                          valueText.[0 .. 50] + "..."
+                                      if valueText.Length > MAXTOOLTIP then 
+                                          valueText.[0 .. MAXTOOLTIP-1] + "..."
                                       else   
                                           valueText
                                   yield action + valueText ]
@@ -305,25 +322,28 @@ let ProcessCommandLine (argv: string[]) =
         let sink =
             if writeinfo then 
                 { new Sink with 
-                     member __.CallAndReturn(mdef, _typeArgs, args, res) = 
+                     member __.CallAndReturn(mref, mdef, _typeArgs, args, res) = 
+                         let lines = 
+                            [ for (p, arg) in Seq.zip mdef.Parameters args do 
+                                  yield (sprintf "%s:" p.Name, arg)
+                              if mdef.IsValue then 
+                                  yield ("value:", res.Value)
+                              else
+                                  yield ("return:", res.Value) ]
                          mdef.Range |> Option.iter (fun r -> 
-                             let lines = 
-                                 [ for (p, arg) in Seq.zip mdef.Parameters args do 
-                                       yield (sprintf "%s:" p.Name, arg)
-                                   if mdef.IsValue then 
-                                       yield ("value:", res.Value)
-                                   else
-                                       yield ("return:", res.Value) ]
-                             tooltips.Add(r, lines))
+                             tooltips.Add(r, lines, true))
+                         mref.Range |> Option.iter (fun r -> 
+                             tooltips.Add(r, lines, true))
 
                      member __.BindValue(vdef, value) = 
-                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
                      member __.BindLocal(vdef, value) = 
-                         vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+                         if not vdef.IsCompilerGenerated then 
+                             vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
                      member __.UseLocal(vref, value) = 
-                         vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)])))
+                         vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
                 }
                 |> Some
             else  
