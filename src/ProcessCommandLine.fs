@@ -195,7 +195,7 @@ let ProcessCommandLine (argv: string[]) =
         with err -> 
             printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
 
-    let emitInfoFile sourceFile lines = 
+    let emitInfoFile (sourceFile: string) lines = 
         let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
         let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
         let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
@@ -294,6 +294,7 @@ let ProcessCommandLine (argv: string[]) =
                     if List.length rangeStack > 0 then 
                         let range = List.last rangeStack 
                         let message = "LiveCheck failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
+                        printfn "%s" message
                         let line = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
                         yield line |]
 
