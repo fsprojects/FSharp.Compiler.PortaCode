@@ -323,7 +323,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 *)
 
     /// Resolve an F# entity (type or module)
-    let ResolveEntity(entityRef) = 
+    let resolveEntity entityRef = 
         match entityResolutions.TryGetValue(entityRef) with 
         | true, v -> v
         | _ -> 
@@ -343,24 +343,24 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             res
 
     /// Resolve an array of F# types
-    let rec ResolveTypes(env, tys: DType[]) = 
-        let res = tys |> Array.map (fun ty -> ResolveType (env, ty))
+    let rec resolveTypes (env, tys: DType[]) = 
+        let res = tys |> Array.map (fun ty -> resolveType (env, ty))
         if res |> Array.forall (function RType _ -> true | _ -> false) then 
             RTypes (res |> Array.map (function RType x -> x | _ -> failwith "unreachable"))
         else 
             UTypes res
 
     /// Resolve an F# type
-    and ResolveType(env, ty: DType) = 
+    and resolveType (env, ty: DType) = 
         match ty with 
         | DByRefType(elemType) -> 
-            match ResolveType (env, elemType) with 
+            match resolveType (env, elemType) with 
             | RTypeOrObj t -> RType (t.MakeByRefType())
         | DArrayType(1, elemType) -> 
-            match ResolveType (env, elemType) with 
+            match resolveType (env, elemType) with 
             | RTypeOrObj t -> RType (t.MakeArrayType())
         | DArrayType(n, elemType) -> 
-            match ResolveType (env, elemType) with 
+            match resolveType (env, elemType) with 
             | RTypeOrObj t -> RType (t.MakeArrayType(n))
         | DNamedType((DEntityRef nm as n), argTypes) -> 
             // FCS TODO: FCS quirk this is a hack to do with the fact that float<1> is being reported as a type by FCS and PortaCode
@@ -373,17 +373,17 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             elif nm.StartsWith "Microsoft.FSharp.Core.int32`1" then 
                 RType typeof<int32>
             else 
-                let (RTypesOrObj argTypesR) = ResolveTypes (env, argTypes)
-                match ResolveEntity n, argTypesR with 
+                let (RTypesOrObj argTypesR) = resolveTypes (env, argTypes)
+                match resolveEntity n, argTypesR with 
                 | REntity e, [| |] -> RType e
                 | REntity e, tys -> RType (e.MakeGenericType(tys))
                 | UEntity u1, u2 -> UNamedType (u1, u2)
         | DFunctionType (t1, t2) -> 
-            let (RTypeOrObj t1R) = ResolveType (env, t1)
-            let (RTypeOrObj t2R) = ResolveType (env, t2)
+            let (RTypeOrObj t1R) = resolveType (env, t1)
+            let (RTypeOrObj t2R) = resolveType (env, t2)
             RType (typedefof<int -> int>.MakeGenericType(t1R, t2R))
         | DTupleType(isStruct, argTypes) -> 
-            let (RTypesOrObj tys) = ResolveTypes (env, argTypes)
+            let (RTypesOrObj tys) = resolveTypes (env, argTypes)
             RType (if isStruct then failwith "struct tuple NYI" (* FSharp.Reflection.FSharpType.MakeStructTupleType(Array.ofList tys) *) else FSharp.Reflection.FSharpType.MakeTupleType(tys))
         | DVariableType v -> 
             match env.Types.TryGetValue v with 
@@ -393,9 +393,9 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 RType typeof<obj>
         
     /// Resolve an F# union case
-    let ResolveUnionCase(env, unionType, unionCaseRef) = 
+    let resolveUnionCase (env, unionType, unionCaseRef) = 
         let (DUnionCaseRef unionCaseName) = unionCaseRef
-        let unionTypeR = ResolveType (env, unionType)
+        let unionTypeR = resolveType (env, unionType)
 
         match unionTypeR with 
         | RType unionTypeV -> 
@@ -410,9 +410,9 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             UUnionCase (tag, unionCaseName)
 
     /// Resolve an F# class or record field
-    let ResolveField(env, classOrRecordType,fieldRef) = 
+    let resolveField (env, classOrRecordType,fieldRef) = 
         let (DFieldRef (index, fieldName)) = fieldRef
-        let classOrRecordTypeR = ResolveType(env, classOrRecordType)
+        let classOrRecordTypeR = resolveType(env, classOrRecordType)
 
         match classOrRecordTypeR with 
         | RType classOrRecordTypeV -> 
@@ -426,8 +426,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             UField (index, ty, fieldName)
 
     /// Resolve a .NET field
-    let ResolveILField(env, fieldType, fieldName) =
-        let fieldTypeR = ResolveType (env, fieldType)
+    let resolveILField (env, fieldType, fieldName) =
+        let fieldTypeR = resolveType (env, fieldType)
 
         match fieldTypeR with 
         | RType classOrRecordTypeV -> 
@@ -437,7 +437,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             failwithf "unexpected resolve of ILField %s in interpreted type %A" fieldName fieldType
 
     /// Make a resolved method value for a method info
-    let MakeRMethod(m: MethodInfo) = 
+    let makeRMethod (m: MethodInfo) = 
         if m = op_float then RPrim_float
         elif m = op_float32 then RPrim_float32
         elif m = op_double then RPrim_double
@@ -481,45 +481,45 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         else RMethod m
 
     /// Get the lambda value for the method
-    let InterpMethod(formalEnv, entityR, methodName, paramTys) = 
-        let paramTysR = ResolveTypes (formalEnv, paramTys)
+    let interpMethod (formalEnv, entityR, methodName, paramTys) = 
+        let paramTysR = resolveTypes (formalEnv, paramTys)
         let key = (entityR, methodName, paramTysR)
         if not (members.ContainsKey(key)) then failwithf "No member found for key %A" key
         let membDef, minfo = members.[key]
         UMethod (membDef, minfo)
 
     /// Resolve a method name to a lambda value
-    let ResolveMethod(v: DMemberRef) = 
+    let resolveMethod (v: DMemberRef) = 
         // TODO: create formal type environment to help resolve overloading by type
         let formalEnv = envEmpty 
-        match ResolveEntity v.Entity with 
+        match resolveEntity v.Entity with 
         | REntity entityType as eR -> 
             let n = v.ArgTypes.Length
             if v.Name = ".ctor" || v.Name = ".cctor" then 
                 match entityType.GetConstructors(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
                 | [| cinfo |] -> RMethod cinfo
                 | _res -> 
-                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, v.ArgTypes)
+                    let (RTypesOrObj paramTysV) = resolveTypes (formalEnv, v.ArgTypes)
                     match entityType.GetConstructor(bindAll, null, paramTysV, null) with 
                     | null -> failwithf "couldn't bind constructor %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | cinfo -> RMethod cinfo
             else
                 match entityType.GetMethods(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
-                | [| minfo |] -> MakeRMethod minfo
+                | [| minfo |] -> makeRMethod minfo
                 | [| |] when n = 0 && v.GenericArity = 0 -> 
                     // FCS QUIRK TODO: cleanup FCS and portacode so names of properties are never used
                     match entityType.GetProperty(v.Name, bindAll) with 
                     | null -> failwithf "couldn't bind method %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     //| null -> ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
-                    | pinfo  -> MakeRMethod pinfo.GetMethod
+                    | pinfo  -> makeRMethod pinfo.GetMethod
                 | _res -> 
-                    let (RTypesOrObj paramTysV) = ResolveTypes (formalEnv, v.ArgTypes)
+                    let (RTypesOrObj paramTysV) = resolveTypes (formalEnv, v.ArgTypes)
                     match entityType.GetMethod(v.Name, bindAll, null, paramTysV, null) with 
                     | null -> failwithf "couldn't bind property %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     //| null -> ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | minfo -> RMethod minfo
         | eR -> 
-            InterpMethod(formalEnv, eR, v.Name, v.ArgTypes)
+            interpMethod(formalEnv, eR, v.Name, v.ArgTypes)
 
     /// Add the declarations for the types and methods
     member ctxt.AddDecls(decls: DDecl[]) = 
@@ -534,9 +534,9 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 ctxt.AddDecls(subDecls)
 
             | DDeclMember (membDef, body, _isLiveCheck) -> 
-                let ty = ResolveEntity(membDef.EnclosingEntity)
+                let ty = resolveEntity(membDef.EnclosingEntity)
                 let paramTypes = membDef.Parameters |> Array.map (fun p -> p.Type) 
-                let paramTypesR = ResolveTypes(env, paramTypes) 
+                let paramTypesR = resolveTypes(env, paramTypes) 
                 let thunk = ctxt.EvalMethodLambda (envEmpty, (membDef.Name = ".ctor"), membDef.IsInstance, membDef.GenericParameters, membDef.Parameters, body)
                 members.[(ty, membDef.Name, paramTypesR)] <- (membDef, Value thunk)
 
@@ -577,7 +577,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             | DDeclMember (membDef, body, isLiveCheck) -> 
                 if (membDef.IsValueDef && not evalLiveChecksOnly) || 
                    (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0)) then 
-                    let ty = ResolveEntity(membDef.EnclosingEntity)
+                    let ty = resolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.TryEvalExpr (env, body, membDef.Range)
                     match res with 
                     | Choice1Of2 res -> 
@@ -603,7 +603,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 ctxt.EvalDecls(env, subDecls)
             | DDeclMember (membDef, body, _isLiveCheck) -> 
                 if membDef.IsValueDef then 
-                    let ty = ResolveEntity(membDef.EnclosingEntity)
+                    let ty = resolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.EvalExpr (env, body) 
                     members.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
             | DDecl.InitAction (expr, range) -> 
@@ -759,7 +759,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | _ -> failwithf "didn't find mutable value in the environment to write" 
 
             | Choice2Of2 mref -> 
-                let entityR = ResolveEntity mref.Entity
+                let entityR = resolveEntity mref.Entity
                 let key = (entityR, mref.Name, RTypes [| |])
                 if not (members.ContainsKey(key)) then failwithf "No member found for key %A" key
                 let membDef, _ = members.[key]
@@ -768,7 +768,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             Value null
 
         | DExpr.Const(constValueObj, constType) -> 
-            let (RTypeOrObj constTypeR) = ResolveType (env, constType)
+            let (RTypeOrObj constTypeR) = resolveType (env, constType)
             match constTypeR with 
             | ty when ty = typeof<byte> -> Value (Convert.ToByte (constValueObj))
             | ty when ty = typeof<uint16> -> Value (Convert.ToUInt16 (constValueObj))
@@ -788,8 +788,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         | _ -> failwithf "unrecognized %+A" expr
 
     member ctxt.EvalTraitCall(env, traitName, sourceTypes, isInstance, argTypes, argExprs) =
-        let (RTypesOrObj sourceTypesR) = ResolveTypes (env, sourceTypes)
-        let (RTypesOrObj argTypesR) = ResolveTypes (env, argTypes)
+        let (RTypesOrObj sourceTypesR) = resolveTypes (env, sourceTypes)
+        let (RTypesOrObj argTypesR) = resolveTypes (env, argTypes)
         let argExprsV : obj[] = ctxt.EvalExprs (env, argExprs)
         match sourceTypesR with 
         | [| sourceTypeR |] -> 
@@ -807,7 +807,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         objValOpt |> Option.map getVal |> Option.toObj
 
     member ctxt.EvalDefaultValue(env, defaultType) =
-        let defaultTypeR = ResolveType (env, defaultType)
+        let defaultTypeR = resolveType (env, defaultType)
         let v = 
             match defaultTypeR with
             | RType ty -> if ty.IsValueType then Activator.CreateInstance(ty) else null
@@ -816,8 +816,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 
     member ctxt.EvalNewObject(env, objCtor, typeArgs, argExprs) =
         let argsV = ctxt.EvalExprs(env, argExprs)
-        let typeArgsR = ResolveTypes (env, typeArgs)
-        let methR = ResolveMethod (objCtor)
+        let typeArgsR = resolveTypes (env, typeArgs)
+        let methR = resolveMethod (objCtor)
 
         match methR, typeArgsR with 
         | RMethod (:? ConstructorInfo as cinfo), RTypesOrObj typeArgsV -> 
@@ -840,7 +840,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         let funcV =  ctxt.EvalExpr(env, funcExpr)
         let funcV = 
             if typeArgs.Length > 0 then 
-               let (RTypesOrObj typeArgsR) = ResolveTypes (env, typeArgs)
+               let (RTypesOrObj typeArgsR) = resolveTypes (env, typeArgs)
                match getVal funcV with   
                | :? (Type[] -> obj) as f ->  Value (f typeArgsR)
                | t -> failwithf "unexpected value '%A' of type '%A' when evaluating type application" t (t.GetType())
@@ -886,7 +886,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
     member ctxt.EvalCall(env, objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) =
         let objOptV = ctxt.EvalExprOpt (env, objExprOpt)
         let argsV = ctxt.EvalExprs (env, argExprs)
-        let methR = ResolveMethod (memberOrFunc)
+        let methR = resolveMethod (memberOrFunc)
 
         // These primitives don't have dynamic invocation implementations
         match methR with 
@@ -930,8 +930,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         | RPrim_checked_mul -> binOp "op_Multiply" argsV Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*)
         | _ ->
 
-        let typeArgs1R = ResolveTypes (env, typeArgs1)
-        let typeArgs2R = ResolveTypes (env, typeArgs2)
+        let typeArgs1R = resolveTypes (env, typeArgs1)
+        let typeArgs2R = resolveTypes (env, typeArgs2)
 
         match methR, typeArgs1R, typeArgs2R with 
         | RMethod (:? MethodInfo as minfo), RTypesOrObj typeArgs1V, RTypesOrObj typeArgs2V -> 
@@ -985,7 +985,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 
     member ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo) =
         let objOptV = ctxt.EvalExprOpt(env, objExprOpt)
-        let fieldR = ResolveField (env, recordOrClassType, fieldInfo)
+        let fieldR = resolveField (env, recordOrClassType, fieldInfo)
 
         match fieldR with 
         | RField (:? FieldInfo as finfo) -> finfo.GetValue(objOptV) |> Value
@@ -1014,7 +1014,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
     // Note: FieldSet is used even for immutable fields in the case of the compiled form of F# constructors
     member ctxt.EvalFieldSet(env, objExprOpt, recordOrClassType, fieldInfo, argExpr) =
         let objOptV = ctxt.EvalExprOpt(env, objExprOpt)
-        let fieldR = ResolveField (env, recordOrClassType, fieldInfo)
+        let fieldR = resolveField (env, recordOrClassType, fieldInfo)
         let argExprV = ctxt.EvalExpr(env, argExpr) |> getVal
 
         match fieldR with 
@@ -1043,7 +1043,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 
     member ctxt.EvalILFieldGet(env, objExprOpt, recordOrClassType, fieldInfo) =
         let objOptV = ctxt.EvalExprOpt(env, objExprOpt)
-        let fieldR = ResolveILField (env, recordOrClassType, fieldInfo)
+        let fieldR = resolveILField (env, recordOrClassType, fieldInfo)
 
         match fieldR with 
         | RField (:? FieldInfo as finfo) -> finfo.GetValue(objOptV) |> Value
@@ -1052,8 +1052,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         | UField (_i, _ty, nm) -> failwithf "unexpected ILFieldGet %s in interpreted type %A" nm recordOrClassType
 
     member ctxt.EvalLambda(env, domainType, rangeType, lambdaVar, bodyExpr) =
-        let domainTypeR = ResolveType (env, domainType)
-        let rangeTypeR = ResolveType (env, rangeType)
+        let domainTypeR = resolveType (env, domainType)
+        let rangeTypeR = resolveType (env, rangeType)
         match domainTypeR, rangeTypeR with 
         | RTypeOrObj domainTypeV, RTypeOrObj rangeTypeV -> 
             let funcTypeV = typedefof<int -> int>.MakeGenericType(domainTypeV, rangeTypeV)
@@ -1068,7 +1068,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         |> box |> Value
 
     member ctxt.EvalNewArray(env, arrayType, argExprs) =
-        let arrayTypeR = ResolveType (env, arrayType)
+        let arrayTypeR = resolveType (env, arrayType)
         let argsV = ctxt.EvalExprs(env, argExprs)
 
         match arrayTypeR with 
@@ -1080,7 +1080,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             failwithf "unexpected failure to resolve array type %A" arrayType
 
     member ctxt.EvalNewRecord(env, recordType, argExprs) =
-        let recordTypeR = ResolveType (env, recordType)
+        let recordTypeR = resolveType (env, recordType)
         let argsV = ctxt.EvalExprs(env, argExprs)
 
         match recordTypeR with 
@@ -1091,7 +1091,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             Value recdV
 
     member ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs) =
-        let unionCaseR = ResolveUnionCase (env, unionType, unionCase)
+        let unionCaseR = resolveUnionCase (env, unionType, unionCase)
         let argsV = ctxt.EvalExprs (env, argExprs)
 
         match unionCaseR with 
@@ -1101,7 +1101,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             unionV |> box |> Value
 
     member ctxt.EvalNewTuple(env, tupleType, argExprs) =
-        let tupleTypeR = ResolveType (env, tupleType)
+        let tupleTypeR = resolveType (env, tupleType)
         let argsV = ctxt.EvalExprs (env, argExprs)
 
         match tupleTypeR with 
@@ -1178,7 +1178,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 *)
 
     member ctxt.EvalUnionCaseTest(env, unionExpr, unionType, unionCase) =
-        let unionCaseR = ResolveUnionCase (env, unionType, unionCase)
+        let unionCaseR = resolveUnionCase (env, unionType, unionCase)
         let unionV : obj = ctxt.EvalExpr (env, unionExpr) |> getVal
 
         let res = 
@@ -1198,8 +1198,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         Value (box res)
 
     member ctxt.EvalUnionCaseGet(env, unionExpr, unionType, unionCase, unionCaseField) =
-        let unionCaseR = ResolveUnionCase (env, unionType, unionCase)
-        let unionCaseFieldR = ResolveField (env, unionType, unionCaseField)
+        let unionCaseR = resolveUnionCase (env, unionType, unionCase)
+        let unionCaseFieldR = resolveField (env, unionType, unionCaseField)
         let unionV : obj = ctxt.EvalExpr (env, unionExpr) |> getVal
 
         let res = 
@@ -1222,7 +1222,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         Value (box res)
 
     member ctxt.EvalUnionCaseTag(env, unionExpr, unionType) =
-        let unionTypeR = ResolveType (env, unionType)
+        let unionTypeR = resolveType (env, unionType)
         let unionV : obj = ctxt.EvalExpr (env, unionExpr) |> getVal
 
         let res = 
@@ -1239,7 +1239,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         Value (box res)
 
     member ctxt.EvalTypeTest(env, ty, inpExpr) =
-        let tyR = ResolveType (env, ty)
+        let tyR = resolveType (env, ty)
         let inpExprV = ctxt.EvalExpr (env, inpExpr) |> getVal
         let res = 
             match inpExprV with 
@@ -1249,3 +1249,9 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | RType tyT -> tyT.IsAssignableFrom(obj.GetType())
                 | _ -> failwith "can't do type tests on intepreted types"
         Value res
+
+    /// Resolve an F# entity (type or module)
+    member __.ResolveEntity entityRef = resolveEntity entityRef
+
+    /// Resolve a method name to a lambda value
+    member __.ResolveMethod (v: DMemberRef) = resolveMethod v
