@@ -21,7 +21,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable eval = false
     let mutable livechecksonly = false
-    let mutable watch = false
+    let mutable watch = true
     let mutable useEditFiles = false
     let mutable writeinfo = false
     let mutable webhook = None
@@ -42,6 +42,7 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif not haveDashes && arg = "--watch" then watch <- true
+                elif not haveDashes && arg = "--once" then watch <- false
                 elif not haveDashes && arg = "--eval" then eval <- true
                 elif not haveDashes && arg = "--livechecksonly" then livechecksonly <- true
                 elif not haveDashes && arg = "--writeinfo" then writeinfo <- true
@@ -64,11 +65,12 @@ let ProcessCommandLine (argv: string[]) =
                    printfn ""
                    printfn "The default source is a single project file in the current directory."
                    printfn "The default output is a JSON dump of the PortaCode."
+                   printfn "The default behaviour is to watch the source files of the project for changes"
                    printfn ""
                    printfn "Arguments:"
-                   printfn "   --watch           Watch the source files of the project for changes"
-                   printfn "   --webhook[:<url>] Send the JSON-encoded contents of the PortaCode to the webhook"
-                   printfn "                     The default URL is %s" defaultUrl
+                   printfn "   --once            Don't watch the source files of the project for changes - just do things once"
+                   printfn "   --webhook:<url>   Send the JSON-encoded contents of the PortaCode to the webhook"
+                   printfn "   --send            Equivalent to --webhook:%s" defaultUrl
                    printfn "   --eval            Evaluate the contents using the interpreter after each update"
                    printfn "   --livechecksonly  (Experimental) Only evaluate declarations with a LiveCheck attribute"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
@@ -81,7 +83,7 @@ let ProcessCommandLine (argv: string[]) =
     if fsharpArgs.Length = 0 && fsproj.IsNone then 
         match Seq.toList (Directory.EnumerateFiles(Environment.CurrentDirectory, "*.fsproj")) with 
         | [ ] -> 
-            failwith "no project file found, no compilation arguments given" 
+            failwithf "no project file found, no compilation arguments given and no project file found in \"%s\"" Environment.CurrentDirectory 
         | [ file ] -> 
             printfn "fscd: using implicit project file '%s'" file
             fsproj <- Some file
