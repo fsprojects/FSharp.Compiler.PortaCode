@@ -26,7 +26,8 @@ let ProcessCommandLine (argv: string[]) =
     let mutable writeinfo = false
     let mutable webhook = None
     let mutable otherFlags = []
-    let args = 
+    let defaultUrl = "http://localhost:9867/update"
+    let fsharpArgs = 
         let mutable haveDashes = false
 
         [| for arg in argv do 
@@ -40,23 +41,52 @@ let ProcessCommandLine (argv: string[]) =
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
-                elif arg = "--watch" then watch <- true
-                elif arg = "--vshack" then useEditFiles <- true
-                elif arg = "--eval" then eval <- true
-                elif arg = "--livechecksonly" then livechecksonly <- true
-                elif arg = "--writeinfo" then writeinfo <- true
-                elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
+                elif not haveDashes && arg = "--watch" then watch <- true
+                elif not haveDashes && arg = "--eval" then eval <- true
+                elif not haveDashes && arg = "--livechecksonly" then livechecksonly <- true
+                elif not haveDashes && arg = "--writeinfo" then writeinfo <- true
+                elif not haveDashes && arg = "--vshack" then useEditFiles <- true
+                elif not haveDashes && arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
+                elif not haveDashes && arg.StartsWith "--webhook" then webhook  <- Some defaultUrl
+                elif not haveDashes && arg = "--version" then 
+                   printfn ""
+                   printfn "*** NOTE: if sending the code to a device the versions of CodeModel.fs and Interpreter.fs on the device must match ***"
+                   printfn ""
+                   printfn "CLI tool assembly version: %A" (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version)
+                   printfn "CLI tool name: %s" (System.Reflection.Assembly.GetExecutingAssembly().GetName().Name)
+                   printfn ""
+                elif not haveDashes && arg = "--help" then 
+                   printfn "Command line tool for watching and interpreting F# projects"
+                   printfn ""
+                   printfn "Usage: <tool> arg .. arg [-- <other-args>]"
+                   printfn "       <tool> @args.rsp  [-- <other-args>]"
+                   printfn "       <tool> ... Project.fsproj ... [-- <other-args>]"
+                   printfn ""
+                   printfn "The default source is a single project file in the current directory."
+                   printfn "The default output is a JSON dump of the PortaCode."
+                   printfn ""
+                   printfn "Arguments:"
+                   printfn "   --watch           Watch the source files of the project for changes"
+                   printfn "   --webhook[:<url>] Send the JSON-encoded contents of the PortaCode to the webhook"
+                   printfn "                     The default URL is %s" defaultUrl
+                   printfn "   --eval            Evaluate the contents using the interpreter after each update"
+                   printfn "   --livechecksonly  (Experimental) Only evaluate declarations with a LiveCheck attribute"
+                   printfn "                     This uses on-demand execution semantics for top-level declarations"
+                   printfn "   --writeinfo       (Experimental) Write an info file based on results of evaluation"
+                   printfn "   --vshack          (Experimental) Watch for .fsharp/foo.fsx.edit files and use the contents of those"
+                   printfn "   <other-args>      All other args are assumed to be extra F# command line arguments"
+                   exit 1
                 else yield arg  |]
 
-    if args.Length = 0 && fsproj.IsNone then 
+    if fsharpArgs.Length = 0 && fsproj.IsNone then 
         match Seq.toList (Directory.EnumerateFiles(Environment.CurrentDirectory, "*.fsproj")) with 
         | [ ] -> 
             failwith "no project file found, no compilation arguments given" 
         | [ file ] -> 
             printfn "fscd: using implicit project file '%s'" file
             fsproj <- Some file
-        | _ -> 
-            failwith "multiple project files found" 
+        | file1 :: file2 :: _ -> 
+            failwithf "multiple project files found, e.g. %s and %s" file1 file2 
 
     let editDirAndFile (fileName: string) =
         assert useEditFiles
@@ -85,7 +115,7 @@ let ProcessCommandLine (argv: string[]) =
     let options = 
         match fsproj with 
         | Some fsprojFile -> 
-            if args.Length > 1 then failwith "can't give both project file and compilation arguments"
+            if fsharpArgs.Length > 1 then failwith "can't give both project file and compilation arguments"
             match FSharpDaemon.ProjectCracker.load (new System.Collections.Concurrent.ConcurrentDictionary<_,_>()) fsprojFile with 
             | Ok (options, sourceFiles, _log) -> 
                 let options = { options with SourceFiles = Array.ofList sourceFiles }
@@ -96,7 +126,7 @@ let ProcessCommandLine (argv: string[]) =
                 failwithf "Couldn't parse project file: %A" err
             
         | None -> 
-            let sourceFiles, otherFlags2 = args |> Array.partition (fun arg -> arg.EndsWith(".fs") || arg.EndsWith(".fsi") || arg.EndsWith(".fsx"))
+            let sourceFiles, otherFlags2 = fsharpArgs |> Array.partition (fun arg -> arg.EndsWith(".fs") || arg.EndsWith(".fsi") || arg.EndsWith(".fsx"))
             let otherFlags = [| yield! otherFlags; yield! otherFlags2 |]
             let sourceFiles = sourceFiles |> Array.map Path.GetFullPath 
             printfn "CurrentDirectory = %s" Environment.CurrentDirectory
