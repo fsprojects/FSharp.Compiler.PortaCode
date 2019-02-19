@@ -41,21 +41,21 @@ let ProcessCommandLine (argv: string[]) =
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
-                elif not haveDashes && arg = "--watch" then watch <- true
-                elif not haveDashes && arg = "--eval" then eval <- true
-                elif not haveDashes && arg = "--livechecksonly" then livechecksonly <- true
-                elif not haveDashes && arg = "--writeinfo" then writeinfo <- true
-                elif not haveDashes && arg = "--vshack" then useEditFiles <- true
-                elif not haveDashes && arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
-                elif not haveDashes && arg.StartsWith "--send" then webhook  <- Some defaultUrl
-                elif not haveDashes && arg = "--version" then 
+                elif arg = "--watch" then watch <- true
+                elif arg = "--eval" then eval <- true
+                elif arg = "--livechecksonly" then livechecksonly <- true
+                elif arg = "--writeinfo" then writeinfo <- true
+                elif arg = "--vshack" then useEditFiles <- true
+                elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
+                elif arg = "--send" then webhook  <- Some defaultUrl
+                elif arg = "--version" then 
                    printfn ""
                    printfn "*** NOTE: if sending the code to a device the versions of CodeModel.fs and Interpreter.fs on the device must match ***"
                    printfn ""
                    printfn "CLI tool assembly version: %A" (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version)
                    printfn "CLI tool name: %s" (System.Reflection.Assembly.GetExecutingAssembly().GetName().Name)
                    printfn ""
-                elif not haveDashes && arg = "--help" then 
+                elif arg = "--help" then 
                    printfn "Command line tool for watching and interpreting F# projects"
                    printfn ""
                    printfn "Usage: <tool> arg .. arg [-- <other-args>]"
