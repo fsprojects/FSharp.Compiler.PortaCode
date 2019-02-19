@@ -21,7 +21,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable eval = false
     let mutable livechecksonly = false
-    let mutable watch = true
+    let mutable watch = false
     let mutable useEditFiles = false
     let mutable writeinfo = false
     let mutable webhook = None
@@ -42,13 +42,12 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif not haveDashes && arg = "--watch" then watch <- true
-                elif not haveDashes && arg = "--once" then watch <- false
                 elif not haveDashes && arg = "--eval" then eval <- true
                 elif not haveDashes && arg = "--livechecksonly" then livechecksonly <- true
                 elif not haveDashes && arg = "--writeinfo" then writeinfo <- true
                 elif not haveDashes && arg = "--vshack" then useEditFiles <- true
                 elif not haveDashes && arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
-                elif not haveDashes && arg.StartsWith "--webhook" then webhook  <- Some defaultUrl
+                elif not haveDashes && arg.StartsWith "--send" then webhook  <- Some defaultUrl
                 elif not haveDashes && arg = "--version" then 
                    printfn ""
                    printfn "*** NOTE: if sending the code to a device the versions of CodeModel.fs and Interpreter.fs on the device must match ***"
@@ -65,10 +64,9 @@ let ProcessCommandLine (argv: string[]) =
                    printfn ""
                    printfn "The default source is a single project file in the current directory."
                    printfn "The default output is a JSON dump of the PortaCode."
-                   printfn "The default behaviour is to watch the source files of the project for changes"
                    printfn ""
                    printfn "Arguments:"
-                   printfn "   --once            Don't watch the source files of the project for changes - just do things once"
+                   printfn "   --watch           Watch the source files of the project for changes"
                    printfn "   --webhook:<url>   Send the JSON-encoded contents of the PortaCode to the webhook"
                    printfn "   --send            Equivalent to --webhook:%s" defaultUrl
                    printfn "   --eval            Evaluate the contents using the interpreter after each update"
