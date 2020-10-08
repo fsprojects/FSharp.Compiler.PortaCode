@@ -170,7 +170,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    let GeneralTestCaseLiveChecks directory name code refs livechecks =
+    let GeneralTestCaseAux directory name code refs livechecks =
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
         File.WriteAllText (name + ".fs", """
@@ -180,12 +180,13 @@ module TestCode
 
         let args = 
             [| yield "dummy.exe"; 
-               yield "--eval"; 
-               if livechecks then yield "--livechecksonly"; 
+               yield "--once"; 
+               if livechecks then yield "--livecheck"; 
                yield "@" + name + ".args.txt" |]
-        Assert.AreEqual(0, FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine(args))
+        let res = FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine(args)
+        Assert.AreEqual(0, res)
 
-    let GeneralTestCase directory name code refs = GeneralTestCaseLiveChecks directory name code refs false
+    let GeneralTestCase directory name code refs = GeneralTestCaseAux directory name code refs false
 
     let internal SimpleTestCase name code = 
         let directory = __SOURCE_DIRECTORY__ + "/data"
@@ -193,7 +194,7 @@ module TestCode
 
     let internal SimpleLiveCheckTestCase name code = 
         let directory = __SOURCE_DIRECTORY__ + "/data"
-        GeneralTestCaseLiveChecks directory name code "" true // no extra refs
+        GeneralTestCaseAux directory name code "" true // no extra refs
 
 [<Test>]
 let TestTuples () =
@@ -275,7 +276,7 @@ let f () =
     if l.Length <> 3 then failwith "unexpected"
     if s.Count <> 3 then failwith "unexpected"
     if m.Count <> 1 then failwith "unexpected"
-    let a = [| UserType.A 1 ]
+    let a = [| UserType.A 1 |]
     if a.Length <> 1 then failwith "unexpected"
 
 f()
@@ -409,9 +410,9 @@ if x <> 0 then failwith "failure A!" else 1
 let y(c:int) = 
     (x <- x + 1
      x)
-let z1 = y()
+let z1 = y(1)
 if x <> 1 then failwith "failure B!" else 1
-let z2 = y()
+let z2 = y(2)
 if x <> 2 then failwith "failure C!" else 1
 if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
         """
@@ -508,6 +509,69 @@ let f () =
     x
 if f() <> 3 then failwith "fail fail!" 
         """
+
+
+[<Test>]
+let SimpleInheritFromObj() =
+        SimpleTestCase "SimpleInheritFromObj" """
+type C() =
+    inherit obj()
+    member val x = 1 with get, set
+
+let c = C()
+if c.x <> 1 then failwith "fail fail!" 
+c.x <- 3
+if c.x <> 3 then failwith "fail fail!" 
+        """
+
+[<Test>]
+let SimpleInheritFroConcreteClass() =
+        SimpleTestCase "SimpleInheritFromObj" """
+type C() =
+    inherit System.Text.ASCIIEncoding()
+    member val x = 1 with get, set
+
+let c = C()
+if c.CodePage  <> System.Text.ASCIIEncoding().CodePage then failwith "nope"
+
+        """
+
+(* THis fails
+[<Test>]
+let SimpleInterfaceImpl() =
+        SimpleTestCase "SimpleInterfaceImpl" """
+open System
+type C() =
+    interface IComparable with
+       member x.CompareTo(y:obj) = 2
+
+let c = C()
+if (c :> IComparable).CompareTo(c) <> 1 then failwith "fail fail!" 
+        """
+
+
+[<Test>]
+let SimpleInterfaceImplPassedAsArg() =
+        SimpleTestCase "SimpleInterfaceImpl" """
+open System.Collections
+open System.Collections.Generic
+type C() =
+    interface IEnumerable with
+       member x.GetEnumerator() = (x :> _)
+    interface IEnumerable<int> with
+       member x.GetEnumerator() = (x :> _)
+    interface IEnumerator<int> with
+       member x.Current = 1
+       member x.Dispose() = ()
+    interface IEnumerator with
+       member x.MoveNext() = false
+       member x.Current = box 1
+       member x.Reset() = ()
+
+let c = new C() |> Seq.map id |> Seq.toArray
+if c.Length <> 0 then failwith "fail fail!" 
+        """
+*)
 
 
 [<Test>]

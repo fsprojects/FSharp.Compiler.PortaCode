@@ -96,6 +96,7 @@ and DGenericParameterDef =
 and DEntityDef = 
     { Name: string
       GenericParameters: DGenericParameterDef[]
+      BaseType: DType option
       UnionCases: string[]
       Range: DRange option }
 

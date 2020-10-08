@@ -3,8 +3,8 @@ module FSharp.Compiler.PortaCode.FromCompilerService
 
 open FSharp.Compiler.PortaCode.CodeModel
 open System.Collections.Generic
-open Microsoft.FSharp.Compiler.SourceCodeServices
-open Microsoft.FSharp.Compiler.Range
+open FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.Range
 
 let map2 f g (a,b) = (f a, g b)
 
@@ -193,9 +193,12 @@ type Convert(includeRanges: bool) =
           Body = convExpr memb.Body }
 
     and convFieldRef (field: FSharpField) : DFieldRef = 
-        match field.DeclaringEntity.FSharpFields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
-        | Some index -> DFieldRef (index, field.Name)
-        | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
+        match field.DeclaringEntity with
+        | None -> failwithf "couldn't find declaring entity of field %s" field.Name
+        | Some e -> 
+            match e.FSharpFields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
+            | Some index -> DFieldRef (index, field.Name)
+            | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
 
     and convUnionCase (ucase: FSharpUnionCase) : DUnionCaseRef = 
         DUnionCaseRef (ucase.CompiledName)
@@ -313,6 +316,7 @@ type Convert(includeRanges: bool) =
         if entity.IsArrayType then failwith "convEntityDef: can't convert an array"
         if entity.IsFSharpAbbreviation then failwith "convEntityDef: can't convert a type abbreviation"
         { Name = entity.QualifiedName
+          BaseType = entity.BaseType |> Option.map convType
           GenericParameters = convGenericParamDefs entity.GenericParameters 
           UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) 
           Range = convRange entity.DeclarationLocation}

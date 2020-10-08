@@ -10,22 +10,23 @@ open FSharp.Compiler.PortaCode.FromCompilerService
 open System
 open System.Collections.Generic
 open System.IO
-open Microsoft.FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.Text
 open System.Net
 open System.Text
-
 
 let checker = FSharpChecker.Create(keepAssemblyContents = true)
 
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
-    let mutable eval = false
-    let mutable livechecksonly = false
+    let mutable dump = false
+    let mutable livechecksOnly = false
     let mutable watch = false
     let mutable useEditFiles = false
-    let mutable writeinfo = false
+    let mutable writeinfo = true
     let mutable webhook = None
     let mutable otherFlags = []
+    let mutable msbuildArgs = []
     let defaultUrl = "http://localhost:9867/update"
     let fsharpArgs = 
         let mutable haveDashes = false
@@ -40,13 +41,15 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.EndsWith(".fsproj") then 
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
+                elif arg.StartsWith "--msbuildarg:" then msbuildArgs <- msbuildArgs @ [ arg.["----msbuildarg:".Length ..]] 
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
-                elif arg = "--watch" then watch <- true
-                elif arg = "--eval" then eval <- true
-                elif arg = "--livechecksonly" then livechecksonly <- true
-                elif arg = "--writeinfo" then writeinfo <- true
-                elif arg = "--vshack" then useEditFiles <- true
-                elif arg.StartsWith "--webhook:" then webhook  <- Some arg.["--webhook:".Length ..]
+                elif arg = "--once" then watch <- false
+                elif arg = "--dump" then dump <- true
+                elif arg = "--livecheck" then 
+                    livechecksOnly <- true
+                    writeinfo <- true
+                    useEditFiles <- true
+                elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
                    printfn ""
@@ -66,15 +69,16 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "The default output is a JSON dump of the PortaCode."
                    printfn ""
                    printfn "Arguments:"
-                   printfn "   --watch           Watch the source files of the project for changes"
-                   printfn "   --webhook:<url>   Send the JSON-encoded contents of the PortaCode to the webhook"
-                   printfn "   --send            Equivalent to --webhook:%s" defaultUrl
-                   printfn "   --eval            Evaluate the contents using the interpreter after each update"
-                   printfn "   --livechecksonly  (Experimental) Only evaluate declarations with a LiveCheck attribute"
+                   printfn "   --once            Don't enter watch mode (default: watch the source files of the project for changes)"
+                   printfn "   --send:<url>      Send the JSON-encoded contents of the PortaCode to the webhook"
+                   printfn "   --send            Equivalent to --send:%s" defaultUrl
+                   printfn "   --msbuildarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
+                   printfn "   --dump            Dump the contents to console after each update"
+                   printfn "   --livecheck       Only evaluate those with a LiveCheck attribute"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
-                   printfn "   --writeinfo       (Experimental) Write an info file based on results of evaluation"
-                   printfn "   --vshack          (Experimental) Watch for .fsharp/foo.fsx.edit files and use the contents of those"
-                   printfn "   <other-args>      All other args are assumed to be extra F# command line arguments"
+                   printfn "                     Also write an info file based on results of evaluation."
+                   printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"
+                   printfn "   <other-args>      All other args are assumed to be extra F# command line arguments, e.g. --define:FOO"
                    exit 1
                 else yield arg  |]
 
@@ -83,7 +87,7 @@ let ProcessCommandLine (argv: string[]) =
         | [ ] -> 
             failwithf "no project file found, no compilation arguments given and no project file found in \"%s\"" Environment.CurrentDirectory 
         | [ file ] -> 
-            printfn "fscd: using implicit project file '%s'" file
+            printfn "fslive: using implicit project file '%s'" file
             fsproj <- Some file
         | file1 :: file2 :: _ -> 
             failwithf "multiple project files found, e.g. %s and %s" file1 file2 
@@ -116,7 +120,7 @@ let ProcessCommandLine (argv: string[]) =
         match fsproj with 
         | Some fsprojFile -> 
             if fsharpArgs.Length > 1 then failwith "can't give both project file and compilation arguments"
-            match FSharpDaemon.ProjectCracker.load (new System.Collections.Concurrent.ConcurrentDictionary<_,_>()) fsprojFile with 
+            match FSharpDaemon.ProjectCracker.load (new System.Collections.Concurrent.ConcurrentDictionary<_,_>()) fsprojFile msbuildArgs with 
             | Ok (options, sourceFiles, _log) -> 
                 let options = { options with SourceFiles = Array.ofList sourceFiles }
                 let sourceFilesSet = Set.ofList sourceFiles
@@ -134,7 +138,7 @@ let ProcessCommandLine (argv: string[]) =
             match sourceFiles with 
             | [| script |] when script.EndsWith(".fsx") ->
                 let text = readFile script
-                let options, errors = checker.GetProjectOptionsFromScript(script, text, otherFlags=otherFlags) |> Async.RunSynchronously
+                let options, errors = checker.GetProjectOptionsFromScript(script, SourceText.ofString text, otherFlags=otherFlags) |> Async.RunSynchronously
                 if errors.Length > 0 then 
                     for error in errors do 
                         printfn "%s" (error.ToString())
@@ -149,7 +153,7 @@ let ProcessCommandLine (argv: string[]) =
 
     match options with 
     | Result.Error () -> 
-        printfn "fscd: error processing project options or script" 
+        printfn "fslive: error processing project options or script" 
         -1
     | Result.Ok options ->
     let options = { options with OtherOptions = Array.append options.OtherOptions (Array.ofList otherFlags) }
@@ -157,11 +161,11 @@ let ProcessCommandLine (argv: string[]) =
 
     let rec checkFile count sourceFile =         
         try 
-            let _, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, readFile sourceFile, options) |> Async.RunSynchronously  
+            let _, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, SourceText.ofString (readFile sourceFile), options) |> Async.RunSynchronously  
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
-                printfn "aborted"
-                Result.Error None
+                failwith "unexpected aborted"
+                Result.Error (None, None, None)
 
             | FSharpCheckFileAnswer.Succeeded res -> 
                 let mutable hasErrors = false
@@ -171,7 +175,7 @@ let ProcessCommandLine (argv: string[]) =
                         hasErrors <- true
 
                 if hasErrors then 
-                    Result.Error res.ImplementationFile
+                    Result.Error (None, Some res.Errors, res.ImplementationFile)
                 else
                     Result.Ok res.ImplementationFile 
         with 
@@ -180,9 +184,9 @@ let ProcessCommandLine (argv: string[]) =
             checkFile 1 sourceFile
         | exn -> 
             printfn "%s" (exn.ToString())
-            Result.Error None
+            Result.Error (Some exn, None, None)
 
-    let keepRanges = eval
+    let keepRanges = not dump
     let convFile (i: FSharpImplementationFileContents) =         
         //(i.QualifiedName, i.FileName
         i.FileName, { Code = Convert(keepRanges).ConvertDecls i.Declarations }
@@ -193,19 +197,17 @@ let ProcessCommandLine (argv: string[]) =
             | file :: rest -> 
                 match checkFile 0 (Path.GetFullPath(file)) with 
 
-                // Note, if livechecks are on, we continue on regardless of errors
-                | Result.Error iopt when not livechecksonly -> 
-                    printfn "fscd: ERRORS for %s" file
-                    Result.Error ()
+                // Note, if livechecksOnly are on, we continue on regardless of errors
+                | Result.Error iopt when not livechecksOnly -> 
+                    printfn "fslive: ERRORS for %s" file
+                    Result.Error iopt
 
-                | Result.Error iopt 
-                | Result.Ok iopt -> 
-                    printfn "fscd: COMPILED %s" file
-                    match iopt with 
-                    | None -> Result.Error ()
-                    | Some i -> 
-                        printfn "fscd: GOT PortaCode for %s" file
-                        loop rest (i :: acc)
+                | Result.Error ((_, _, None) as info) -> Result.Error info
+                | Result.Ok None -> Result.Error (None, None, None)
+                | Result.Error (_, _, Some i)
+                | Result.Ok (Some i) ->
+                    printfn "fslive: GOT PortaCode for %s" file
+                    loop rest (i :: acc)
             | [] -> Result.Ok (List.rev acc)
         loop (List.ofArray files) []
 
@@ -217,19 +219,21 @@ let ProcessCommandLine (argv: string[]) =
     let sendToWebHook (hook: string) fileContents = 
         try 
             let json = jsonFiles (Array.ofList fileContents)
-            printfn "fscd: GOT JSON, length = %d" json.Length
+            printfn "fslive: GOT JSON, length = %d" json.Length
             use webClient = new WebClient(Encoding = Encoding.UTF8)
-            printfn "fscd: SENDING TO WEBHOOK... " // : <<<%s>>>... --> %s" json.[0 .. min (json.Length - 1) 100] hook
+            printfn "fslive: SENDING TO WEBHOOK... " // : <<<%s>>>... --> %s" json.[0 .. min (json.Length - 1) 100] hook
             let resp = webClient.UploadString (hook,"Put",json)
-            printfn "fscd: RESP FROM WEBHOOK: %s" resp
+            printfn "fslive: RESP FROM WEBHOOK: %s" resp
         with err -> 
-            printfn "fscd: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
+            printfn "fslive: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
 
     let emitInfoFile (sourceFile: string) lines = 
         let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
         let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
         let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
         printfn "writing info file %s..." infoFile 
+        if not (Directory.Exists infoDir) then
+           Directory.CreateDirectory infoDir |> ignore
         try 
             File.WriteAllLines(infoFile, lines)
         finally
@@ -245,8 +249,8 @@ let ProcessCommandLine (argv: string[]) =
         | :? string as s -> sprintf "%A" s
         | value -> 
         let ty = value.GetType()
-        if ty.Name = "DT`1" then 
-            // TODO: this is a hack for TensorFlow.FSharp, consider how to generalize it
+        if ty.Name = "Tensor" || ty.Name = "Shape" then 
+            // TODO: this is a hack for DiffSharp, consider how to generalize it
             value.ToString()
         elif Reflection.FSharpType.IsTuple(ty) then 
             let vs = Reflection.FSharpValue.GetTupleFields(value)
@@ -256,7 +260,23 @@ let ProcessCommandLine (argv: string[]) =
         elif ty.IsArray then 
             let value = (value :?> Array)
             if ty.GetArrayRank() = 1 then 
-                "[| " + String.concat "; " [| for i in 0 .. min 10 (value.GetLength(0) - 1) -> formatValue (value.GetValue(i)) |] + " |]"
+                "[| " + 
+                    String.concat "; " 
+                       [ for i in 0 .. min 10 (value.GetLength(0) - 1) -> 
+                            formatValue (value.GetValue(i)) ] 
+                 + (if value.GetLength(0) > 5 then "; ..." else "")
+                 + " |]"
+            elif ty.GetArrayRank() = 2 then 
+                "[| " + 
+                    String.concat ";   \n " 
+                       [ for i in 0 .. min 5 (value.GetLength(0) - 1) -> 
+                            String.concat ";" 
+                               [ for j in 0 .. min 5 (value.GetLength(1) - 1) -> 
+                                   formatValue (value.GetValue(i, j)) ] 
+                            + (if value.GetLength(1) > 5 then "; ..." else "")
+                       ]
+                  + (if value.GetLength(0) > 5 then "\n   ...\n" else "\n")
+                  + " |]"
             else
                 sprintf "array rank %d" value.Rank 
         elif Reflection.FSharpType.IsRecord(ty) then 
@@ -336,7 +356,7 @@ let ProcessCommandLine (argv: string[]) =
             dict [| for r in options.OtherOptions do 
                         if r.StartsWith("-r:") && not (r.Contains(".NETFramework")) then 
                             let assemName = r.[3..]
-                            printfn "Script: pre-loading referenced assembly %s " assemName
+                            //printfn "Script: pre-loading referenced assembly %s " assemName
                             match System.Reflection.Assembly.LoadFrom(assemName) with 
                             | null -> 
                                 printfn "Script: failed to pre-load referenced assembly %s " assemName
@@ -387,72 +407,79 @@ let ProcessCommandLine (argv: string[]) =
         for (_, contents) in fileConvContents do 
             ctxt.AddDecls(contents.Code)
 
+        let allErrors = ResizeArray<_>()
         for (sourceFile, ds) in fileConvContents do 
             printfn "evaluating decls.... " 
-            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livechecksonly)
+            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livechecksOnly)
 
             if writeinfo then 
                 writeInfoFile (tooltips.ToArray()) sourceFile errors
-            else
-                for (exn, _range) in errors do
-                   raise exn
+            for (exn, _range) in errors do
+                if watch then
+                    printfn "fslive: exception: %A" (exn.ToString())
+                else
+                    raise exn
 
             printfn "...evaluated decls" 
 
     let changed why _ =
         try 
-            printfn "fscd: CHANGE DETECTED (%s), COMPILING...." why
+            printfn "fslive: CHANGE DETECTED (%s), COMPILING...." why
 
             match checkFiles options.SourceFiles with 
-            | Result.Error () -> ()
+            | Result.Error res -> Result.Error res
 
             | Result.Ok allFileContents -> 
 
             match webhook with 
-            | Some hook -> sendToWebHook hook allFileContents
+            | Some hook ->
+                sendToWebHook hook allFileContents
+                Result.Ok()
             | None -> 
 
-            if eval then 
-                printfn "fscd: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
+            if not dump && webhook.IsNone then 
+                printfn "fslive: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
                 evaluateDecls allFileContents 
 
             // The default is to dump
-            if not eval && webhook.IsNone then 
+            if dump && webhook.IsNone then 
                 let fileConvContents = jsonFiles (Array.ofList allFileContents)
 
                 printfn "%A" fileConvContents
+            Result.Ok()
 
         with err when watch -> 
-            printfn "fscd: exception: %A" (err.ToString())
+            printfn "fslive: exception: %A" (err.ToString())
+            Result.Error (Some err, None, None)
 
-    for o in options.OtherOptions do 
-        printfn "compiling, option %s" o
+    //for o in options.OtherOptions do 
+    //    printfn "compiling, option %s" o
 
     if watch then 
         // Send an immediate changed() event
         if webhook.IsNone then 
             printfn "Sending initial changes... " 
             for sourceFile in options.SourceFiles do
-                changed "initial" ()
+                changed "initial" () |> ignore
 
         let mkWatcher (path, fileName) = 
             let watcher = new FileSystemWatcher(path, fileName)
             watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-            watcher.Changed.Add (changed "Changed")
-            watcher.Created.Add (changed "Created")
-            watcher.Deleted.Add (changed "Deleted")
-            watcher.Renamed.Add (changed "Renamed")
+            watcher.Changed.Add (changed "Changed" >> ignore)
+            watcher.Created.Add (changed "Created" >> ignore)
+            watcher.Deleted.Add (changed "Deleted" >> ignore)
+            watcher.Renamed.Add (changed "Renamed" >> ignore)
             watcher
 
         let watchers = 
             [ for sourceFile in options.SourceFiles do
                 let path = Path.GetDirectoryName(sourceFile)
                 let fileName = Path.GetFileName(sourceFile)
-                printfn "fscd: WATCHING %s in %s" fileName path 
+                printfn "fslive: WATCHING %s in %s" fileName path 
                 yield mkWatcher (path, fileName)
                 if useEditFiles then 
                     let infoDir, editFile = editDirAndFile fileName
-                    printfn "fscd: WATCHING %s in %s" editFile infoDir 
+                    printfn "fslive: WATCHING %s in %s" editFile infoDir 
                     yield mkWatcher (infoDir, Path.GetFileName editFile) ]
 
         for watcher in watchers do
@@ -463,7 +490,9 @@ let ProcessCommandLine (argv: string[]) =
         for watcher in watchers do
             watcher.EnableRaisingEvents <- false
 
+        0
     else
-        changed "once" ()
-    0
+        match changed "once" () with 
+        | Error _ -> 1
+        | Ok _ -> 0
 

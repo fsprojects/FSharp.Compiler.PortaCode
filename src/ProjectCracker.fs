@@ -3,17 +3,21 @@
 open System
 open System.IO
 open System.Collections.Concurrent
-open Microsoft.FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.SourceCodeServices
 
 module MSBuildPrj = Dotnet.ProjInfo.Inspect
 
 type NavigateProjectSM =
     | NoCrossTargeting of NoCrossTargetingData
     | CrossTargeting of string list
-and NoCrossTargetingData = { FscArgs: string list; P2PRefs: MSBuildPrj.ResolvedP2PRefsInfo list; Properties: Map<string,string> }
+and NoCrossTargetingData =
+    { FscArgs: string list
+      P2PRefs: MSBuildPrj.ResolvedP2PRefsInfo list
+      Properties: Map<string,string> }
 
 module MSBuildKnownProperties =
     let TargetFramework = "TargetFramework"
+    let DefineConstants = "DefineConstants"
 
 module Option =
   let getOrElse defaultValue option =
@@ -25,10 +29,6 @@ module Option =
 type FilePath = string
   [<RequireQualifiedAccess>]
 type ProjectSdkType =
-#if OLDFORMATS
-    | Verbose of ProjectSdkTypeVerbose
-    | ProjectJson
-#endif
     | DotnetSdk of ProjectSdkTypeDotnetSdk
 and ProjectSdkTypeVerbose =
     {
@@ -36,31 +36,13 @@ and ProjectSdkTypeVerbose =
     }
 and ProjectSdkTypeDotnetSdk =
     {
-      IsTestProject: bool
       Configuration: string // Debug
-      IsPackable: bool // true
       TargetFramework: string // netcoreapp1.0
-      TargetFrameworkIdentifier: string // .NETCoreApp
-      TargetFrameworkVersion: string // v1.0
-
-      MSBuildAllProjects: FilePath list //;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\FSharp.NET.Sdk\Sdk\Sdk.props;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\Sdk\Sdk.props;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.props;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.DefaultItems.props;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.SupportedTargetFrameworks.props;e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\obj\c1.fsproj.nuget.g.props;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\FSharp.NET.Sdk\Sdk\Sdk.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\Sdk\Sdk.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.BeforeCommon.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.DefaultAssemblyInfo.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.DefaultOutputPaths.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.TargetFrameworkInference.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.RuntimeIdentifierInference.targets;C:\Users\e.sada\.nuget\packages\fsharp.net.sdk\1.0.5\build\FSharp.NET.Core.Sdk.targets;e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\c1.fsproj;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Microsoft.Common.CurrentVersion.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\NuGet.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\15.0\Microsoft.Common.targets\ImportAfter\Microsoft.TestPlatform.ImportAfter.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Microsoft.TestPlatform.targets;e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\obj\c1.fsproj.nuget.g.targets;e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\obj\c1.fsproj.proj-info.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.Common.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.PackageDependencyResolution.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Sdk.DefaultItems.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.DisableStandardFrameworkResolution.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.GenerateAssemblyInfo.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.Publish.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\Microsoft.NET.Sdk\build\Microsoft.NET.PreserveCompilationContext.targets;C:\dotnetcli\dotnet-dev-win-x64.1.0.4\sdk\1.0.4\Sdks\NuGet.Build.Tasks.Pack\build\NuGet.Build.Tasks.Pack.targets
-      MSBuildToolsVersion: string // 15.0
-
-      ProjectAssetsFile: FilePath // e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\obj\project.assets.json
+      DefineConstants: string 
       RestoreSuccess: bool // True
-
       Configurations: string list // Debug;Release
       TargetFrameworks: string list // netcoreapp1.0;netstandard1.6
-
       TargetPath: string
-
-      //may not exists
-      RunArguments: string option // exec "e:\github\DotnetNewFsprojTestingSamples\sdk1.0\sample1\c1\bin\Debug\netcoreapp1.0\c1.dll"
-      RunCommand: string option // dotnet
-
-      //from 2.0
-      IsPublishable: bool option // true
-
     }
 type ExtraProjectInfoData =
     {
@@ -85,6 +67,7 @@ type ParsedProjectCache = ConcurrentDictionary<string, ParsedProject>
 let chooseByPrefix (prefix: string) (s: string) =
     if s.StartsWith(prefix) then Some (s.Substring(prefix.Length))
     else None
+
 let chooseByPrefix2 prefixes (s: string) =
     prefixes
     |> List.tryPick (fun prefix -> chooseByPrefix prefix s)
@@ -98,32 +81,31 @@ let splitByPrefix2 prefixes (s: string) =
     |> List.tryPick (fun prefix -> splitByPrefix prefix s)
 
 let outType rsp =
-      match List.tryPick (chooseByPrefix "--target:") rsp with
-      | Some "library" -> ProjectOutputType.Library
-      | Some "exe" -> ProjectOutputType.Exe
-      | Some v -> ProjectOutputType.Custom v
-      | None -> ProjectOutputType.Exe // default if arg is not passed to fsc
+    match List.tryPick (chooseByPrefix "--target:") rsp with
+    | Some "library" -> ProjectOutputType.Library
+    | Some "exe" -> ProjectOutputType.Exe
+    | Some v -> ProjectOutputType.Custom v
+    | None -> ProjectOutputType.Exe // default if arg is not passed to fsc
 
 let private outputFileArg = ["--out:"; "-o:"]
 
 let private makeAbs projDir (f: string) =
-      if Path.IsPathRooted f then f else Path.Combine(projDir, f)
+    if Path.IsPathRooted f then f else Path.Combine(projDir, f)
 
 let outputFile projDir rsp =
-      rsp
-      |> List.tryPick (chooseByPrefix2 outputFileArg)
-      |> Option.map (makeAbs projDir)
+    rsp
+    |> List.tryPick (chooseByPrefix2 outputFileArg)
+    |> Option.map (makeAbs projDir)
 
 let isCompileFile (s:string) =
-      s.EndsWith(".fs") || s.EndsWith (".fsi")
+    s.EndsWith(".fs") || s.EndsWith (".fsi")
 
 let compileFiles =
-      //TODO filter the one without initial -
-      List.filter isCompileFile
+    //TODO filter the one without initial -
+    List.filter isCompileFile
 
 let references =
-      //TODO valid also --reference:
-      List.choose (chooseByPrefix "-r:")
+    List.choose (chooseByPrefix "-r:")
 
 let useFullPaths projDir (s: string) =
     match s |> splitByPrefix2 outputFileArg with
@@ -160,47 +142,23 @@ let getExtraInfo targetPath props =
     let msbuildPropString prop =
         props |> Map.tryFind prop
 
-    { ProjectSdkTypeDotnetSdk.IsTestProject = msbuildPropBool "IsTestProject" |> Option.getOrElse false
-      Configuration = msbuildPropString "Configuration" |> Option.getOrElse ""
-      IsPackable = msbuildPropBool "IsPackable" |> Option.getOrElse false
+    { Configuration = msbuildPropString "Configuration" |> Option.getOrElse ""
       TargetFramework = msbuildPropString MSBuildKnownProperties.TargetFramework |> Option.getOrElse ""
-      TargetFrameworkIdentifier = msbuildPropString "TargetFrameworkIdentifier" |> Option.getOrElse ""
-      TargetFrameworkVersion = msbuildPropString "TargetFrameworkVersion" |> Option.getOrElse ""
+      DefineConstants = msbuildPropString MSBuildKnownProperties.DefineConstants |> Option.getOrElse ""
       TargetPath = targetPath
-
-      MSBuildAllProjects = msbuildPropStringList "MSBuildAllProjects" |> Option.getOrElse []
-      MSBuildToolsVersion = msbuildPropString "MSBuildToolsVersion" |> Option.getOrElse ""
-
-      ProjectAssetsFile = msbuildPropString "ProjectAssetsFile" |> Option.getOrElse ""
       RestoreSuccess = msbuildPropBool "RestoreSuccess" |> Option.getOrElse false
-
       Configurations = msbuildPropStringList "Configurations" |> Option.getOrElse []
-      TargetFrameworks = msbuildPropStringList "TargetFrameworks" |> Option.getOrElse []
-
-      RunArguments = msbuildPropString "RunArguments"
-      RunCommand = msbuildPropString "RunCommand"
-
-      IsPublishable = msbuildPropBool "IsPublishable" }
+      TargetFrameworks = msbuildPropStringList "TargetFrameworks" |> Option.getOrElse [] }
 
 let (|MsbuildOk|_|) x =
     match x with
-#if NETSTANDARD2_0
     | Ok x -> Some x
     | Error _ -> None
-#else
-    | Choice1Of2 x -> Some x
-    | Choice2Of2 _ -> None
-#endif
 
 let (|MsbuildError|_|) x =
     match x with
-#if NETSTANDARD2_0
     | Ok _ -> None
     | Error x -> Some x
-#else
-    | Choice1Of2 _ -> None
-    | Choice2Of2 x -> Some x
-#endif
 
 let runProcess (log: string -> unit) (workingDir: string) (exePath: string) (args: string) =
     let psi = System.Diagnostics.ProcessStartInfo()
@@ -219,7 +177,7 @@ let runProcess (log: string -> unit) (workingDir: string) (exePath: string) (arg
 
     p.ErrorDataReceived.Add(fun ea -> log (ea.Data))
 
-    // printfn "running: %s %s" psi.FileName psi.Arguments
+    printfn "running: %s %s" psi.FileName psi.Arguments
 
     p.Start() |> ignore
     p.BeginOutputReadLine()
@@ -231,75 +189,45 @@ let runProcess (log: string -> unit) (workingDir: string) (exePath: string) (arg
     exitCode, (workingDir, exePath, args)
 
 
-let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAsSdk (file : string) =
+let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAsSdk (file : string) msbuildArgs =
 
     let rec projInfoOf additionalMSBuildProps (file: string) : ParsedProject =
         let projDir = Path.GetDirectoryName file
-
-        //notifyState (WorkspaceProjectState.Loading file)
 
         match parseAsSdk with
         | ProjectParsingSdk.DotnetSdk ->
             let projectAssetsJsonPath = Path.Combine(projDir, "obj", "project.assets.json")
             if not(File.Exists(projectAssetsJsonPath)) then
                 failwithf "project '%s' not restored" file
-#if OLDFORMATS
-        | ProjectParsingSdk.VerboseSdk ->
-            ()
-#endif
 
         let getFscArgs =
             match parseAsSdk with
             | ProjectParsingSdk.DotnetSdk ->
                 Dotnet.ProjInfo.Inspect.getFscArgs
-#if OLDFORMATS
-            | ProjectParsingSdk.VerboseSdk ->
-                let asFscArgs props =
-                    let fsc = Microsoft.FSharp.Build.Fsc()
-                    Dotnet.ProjInfo.FakeMsbuildTasks.getResponseFileFromTask props fsc
-                let ok =
-#if NETSTANDARD2_0
-                    Ok
-#else
-                    Choice1Of2
-#endif
-                Dotnet.ProjInfo.Inspect.getFscArgsOldSdk (asFscArgs >> ok)
-#endif
 
         let getP2PRefs = Dotnet.ProjInfo.Inspect.getResolvedP2PRefs
         let additionalInfo = //needed for extra
             [ "OutputType"
-              "IsTestProject"
               "Configuration"
-              "IsPackable"
               MSBuildKnownProperties.TargetFramework
-              "TargetFrameworkIdentifier"
-              "TargetFrameworkVersion"
-              "MSBuildAllProjects"
-              "ProjectAssetsFile"
               "RestoreSuccess"
               "Configurations"
               "TargetFrameworks"
-              "RunArguments"
-              "RunCommand"
-              "IsPublishable"
             ]
         let gp () = Dotnet.ProjInfo.Inspect.getProperties (["TargetPath"; "IsCrossTargetingBuild"; "TargetFrameworks"] @ additionalInfo)
 
         let results, log =
             let loggedMessages = System.Collections.Concurrent.ConcurrentQueue<string>()
 
-            let runCmd exePath args = runProcess loggedMessages.Enqueue projDir exePath (args |> String.concat " ")
+            let runCmd exePath args =
+                let args = args @ msbuildArgs
+                runProcess loggedMessages.Enqueue projDir exePath (args |> String.concat " ")
 
             let msbuildExec =
                 let msbuildPath =
                     match parseAsSdk with
                     | ProjectParsingSdk.DotnetSdk ->
                         Dotnet.ProjInfo.Inspect.MSBuildExePath.DotnetMsbuild "dotnet"
-#if OLDFORMATS
-                    | ProjectParsingSdk.VerboseSdk ->
-                        Dotnet.ProjInfo.Inspect.MSBuildExePath.Path "msbuild"
-#endif
                 Dotnet.ProjInfo.Inspect.msbuild msbuildPath runCmd
 
             let additionalArgs = additionalMSBuildProps |> List.map (Dotnet.ProjInfo.Inspect.MSBuild.MSbuildCli.Property)
@@ -308,10 +236,6 @@ let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAs
                 match parseAsSdk with
                 | ProjectParsingSdk.DotnetSdk ->
                     Dotnet.ProjInfo.Inspect.getProjectInfos
-#if OLDFORMATS
-                | ProjectParsingSdk.VerboseSdk ->
-                    Dotnet.ProjInfo.Inspect.getProjectInfosOldSdk
-#endif
 
             let infoResult =
                 file
@@ -392,14 +316,6 @@ let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAs
                 | ProjectParsingSdk.DotnetSdk ->
                     let extraInfo = getExtraInfo tar props
                     ProjectSdkType.DotnetSdk(extraInfo), []
-#if OLDFORMATS
-                | ProjectParsingSdk.VerboseSdk ->
-                    //compatibility with old behaviour, so output is exactly the same
-                    let mergedLog =
-                        [ yield (file, "")
-                          yield! p2pProjects |> List.collect (fun (_,_,x) -> x) ]
-                    ProjectSdkType.Verbose { TargetPath = tar }, mergedLog
-#endif
 
             let po =
                 {
@@ -445,36 +361,20 @@ let private (|ProjectExtraInfoBySdk|_|) po =
               Some extraInfo
           | _ -> None
 
-let private loadBySdk (cache: ParsedProjectCache) parseAsSdk file =
-        let po, log = getProjectOptionsFromProjectFile cache parseAsSdk file
+let private loadBySdk (cache: ParsedProjectCache) parseAsSdk msbuildArgs file =
+    let po, log = getProjectOptionsFromProjectFile cache parseAsSdk msbuildArgs file
 
-        let compileFiles =
-            let sources = compileFiles (po.OtherOptions |> List.ofArray)
-            match po with
-            | ProjectExtraInfoBySdk extraInfo ->
-                match extraInfo.ProjectSdkType with
-#if OLDFORMATS
-                | ProjectSdkType.Verbose _ ->
-                    //compatibility with old behaviour (projectcracker), so test output is exactly the same
-                    //the temp source files (like generated assemblyinfo.fs) are not added to sources
-                    let isTempFile (name: string) =
-                        let tempPath = Path.GetTempPath()
-                        let s = name.ToLower()
-                        s.StartsWith(tempPath.ToLower())
-                    sources
-                    |> List.filter (not << isTempFile)
-                | ProjectSdkType.ProjectJson
-#endif
-                | ProjectSdkType.DotnetSdk _ ->
-                    sources
-            | _ -> sources
+    let compileFiles =
+        let sources = compileFiles (po.OtherOptions |> List.ofArray)
+        match po with
+        | ProjectExtraInfoBySdk extraInfo ->
+            match extraInfo.ProjectSdkType with
+            | ProjectSdkType.DotnetSdk _ ->
+                sources
+        | _ -> sources
 
-        Ok (po, Seq.toList compileFiles, (log |> Map.ofList))
+    Ok (po, Seq.toList compileFiles, (log |> Map.ofList))
 
-let load (cache: ParsedProjectCache) file =
-      loadBySdk cache ProjectParsingSdk.DotnetSdk file
+let load (cache: ParsedProjectCache) msbuildArgs file =
+      loadBySdk cache ProjectParsingSdk.DotnetSdk msbuildArgs file
 
-#if OLDFORMATS
-let loadVerboseSdk (cache: ParsedProjectCache) file =
-      loadBySdk cache ProjectParsingSdk.VerboseSdk file
-#endif
