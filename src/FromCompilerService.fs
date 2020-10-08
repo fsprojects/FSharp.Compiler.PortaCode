@@ -216,7 +216,7 @@ type Convert(includeRanges: bool) =
     and convLocalDef (value: FSharpMemberOrFunctionOrValue) : DLocalDef = 
         { Name = value.CompiledName
           IsMutable = value.IsMutable
-          Type = convType value.FullType
+          LocalType = convType value.FullType
           Range = convRange value.DeclarationLocation
           IsCompilerGenerated=value.IsCompilerGenerated }
 
@@ -233,6 +233,7 @@ type Convert(includeRanges: bool) =
           GenericParameters = convGenericParamDefs memb.GenericParameters
           Parameters = convParamDefs memb
           ReturnType = convReturnType memb
+          IsOverride = memb.IsOverrideOrExplicitInterfaceImplementation
           IsInstance = memb.IsInstanceMemberInCompiledCode
           IsValue = memb.IsValue
           Range = convRange memb.DeclarationLocation
@@ -246,11 +247,12 @@ type Convert(includeRanges: bool) =
         if memb.IsExtensionMember && memb.ApparentEnclosingEntity.GenericParameters.Count > 0 && not (memb.CompiledName = "ProgramRunner`2.EnableLiveUpdate" || memb.CompiledName = "ProgramRunner`3.EnableLiveUpdate") then 
            failwithf "NYI: extension of generic type, needs FCS support: %A::%A" memb.ApparentEnclosingEntity memb
 
-        { Entity=convEntityRef memb.DeclaringEntity.Value
-          Name= memb.CompiledName
-          GenericArity = memb.GenericParameters.Count
-          ArgTypes = paramTypesR 
-          ReturnType = convReturnType memb 
+        { Key =
+            { Entity=convEntityRef memb.DeclaringEntity.Value
+              Name= memb.CompiledName
+              GenericArity = memb.GenericParameters.Count
+              ArgTypes = paramTypesR 
+              ReturnType = convReturnType memb  }
           Range = convRange range }
 
     and convParamTypes (memb: FSharpMemberOrFunctionOrValue) =
@@ -287,15 +289,15 @@ type Convert(includeRanges: bool) =
             | [| p |] when p.Type.HasTypeDefinition && p.Type.TypeDefinition.LogicalName = "unit" -> [| |]
             | ps -> ps
         let parametersR = 
-            parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.Type; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
+            parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; LocalType = convType p.Type; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
         if memb.IsInstanceMember && not memb.IsInstanceMemberInCompiledCode then 
             if memb.IsExtensionMember then 
                 let instanceTypeR = DNamedType (convEntityRef memb.ApparentEnclosingEntity, [| |])
-                let thisParam = { Name = "$this"; IsMutable = false; Type = instanceTypeR; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
+                let thisParam = { Name = "$this"; IsMutable = false; LocalType = instanceTypeR; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
                 Array.append [| thisParam |] parametersR
             else
                 let instanceType = memb.FullType.GenericArguments.[0]
-                let thisParam = { Name = "$this"; IsMutable = false; Type = convType instanceType; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
+                let thisParam = { Name = "$this"; IsMutable = false; LocalType = convType instanceType; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
                 Array.append [| thisParam |] parametersR
         else
             parametersR
@@ -306,7 +308,7 @@ type Convert(includeRanges: bool) =
             match parameters |> Seq.concat |> Seq.toArray with 
             | [| p |] when p.FullType.HasTypeDefinition && p.FullType.TypeDefinition.LogicalName = "unit" -> [| |]
             | ps -> ps
-        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.FullType; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
+        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; LocalType = convType p.FullType; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
 
     and convReturnType (memb: FSharpMemberOrFunctionOrValue) = 
         convType memb.ReturnParameter.Type
@@ -315,8 +317,11 @@ type Convert(includeRanges: bool) =
         if entity.IsNamespace then failwith "convEntityDef: can't convert a namespace"
         if entity.IsArrayType then failwith "convEntityDef: can't convert an array"
         if entity.IsFSharpAbbreviation then failwith "convEntityDef: can't convert a type abbreviation"
-        { Name = entity.QualifiedName
+        { QualifiedName = entity.QualifiedName
+          NameX = entity.CompiledName
           BaseType = entity.BaseType |> Option.map convType
+          DeclaredInterfaces = entity.DeclaredInterfaces |> Seq.toArray |> Array.map convType
+          DeclaredFields = entity.FSharpFields |> Seq.toArray |> Array.map convField
           GenericParameters = convGenericParamDefs entity.GenericParameters 
           UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) 
           Range = convRange entity.DeclarationLocation}
@@ -338,6 +343,14 @@ type Convert(includeRanges: bool) =
         else DNamedType (convEntityRef typ.TypeDefinition, convTypes typ.GenericArguments)
     and convTypes (typs: seq<FSharpType>) = typs |> Seq.toArray |> Array.map convType 
     and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = { Name = gp.Name }
+    and convField (f: FSharpField) : DFieldDef = 
+        { Name = f.Name 
+          IsStatic = f.IsStatic
+          IsMutable = f.IsMutable
+          FieldType = convType f.FieldType
+          Range = convRange f.DeclarationLocation
+          IsCompilerGenerated = f.IsCompilerGenerated
+          }
     and convGenericParamDefs (gps: seq<FSharpGenericParameter>) = gps |> Seq.toArray |> Array.map convGenericParamDef
 
     let rec convDecl d = 

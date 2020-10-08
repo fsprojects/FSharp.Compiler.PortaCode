@@ -8,6 +8,10 @@ type DRange =
      StartColumn: int
      EndLine: int
      EndColumn: int }
+   override range.ToString() = 
+       sprintf "(%d,%d)-(%d-%d)" range.StartLine range.StartColumn range.EndLine range.EndColumn
+
+
 
 /// A representation of resolved F# expressions that can be serialized
 type DExpr = 
@@ -67,14 +71,24 @@ and DType =
 and DLocalDef = 
     { Name: string
       IsMutable: bool
-      Type: DType
+      LocalType: DType
       Range: DRange option
       IsCompilerGenerated: bool }
+
+and DFieldDef = 
+    { Name: string
+      IsStatic: bool
+      IsMutable: bool
+      FieldType: DType
+      Range: DRange option
+      IsCompilerGenerated: bool 
+    }
 
 and DMemberDef = 
     { EnclosingEntity: DEntityRef
       Name: string
       GenericParameters: DGenericParameterDef[]
+      IsOverride: bool
       IsInstance: bool
       IsValue: bool
       IsCompilerGenerated: bool
@@ -83,31 +97,39 @@ and DMemberDef =
       Range: DRange option }
 
     member x.Ref = 
-        { Entity=x.EnclosingEntity
-          Name= x.Name
-          GenericArity = x.GenericParameters.Length 
-          ArgTypes = (x.Parameters |> Array.map (fun p -> p.Type)) 
-          ReturnType = x.ReturnType 
+        { Key =
+            { Entity=x.EnclosingEntity
+              Name= x.Name
+              GenericArity = x.GenericParameters.Length 
+              ArgTypes = (x.Parameters |> Array.map (fun p -> p.LocalType)) 
+              ReturnType = x.ReturnType 
+            }
           Range = x.Range }
 
 and DGenericParameterDef = 
     { Name: string }
 
 and DEntityDef = 
-    { Name: string
+    { QualifiedName: string
+      NameX: string
       GenericParameters: DGenericParameterDef[]
       BaseType: DType option
+      DeclaredInterfaces: DType[]
+      DeclaredFields: DFieldDef[]
       UnionCases: string[]
       Range: DRange option }
 
 and DEntityRef = DEntityRef of string 
 
-and DMemberRef = 
+and DMemberRefKey = 
     { Entity: DEntityRef 
       Name: string
       GenericArity: int 
       ArgTypes: DType[] 
-      ReturnType: DType 
+      ReturnType: DType  }
+
+and DMemberRef = 
+    { Key: DMemberRefKey
       Range: DRange option }
 
 and DLocalRef = 

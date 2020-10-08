@@ -9,7 +9,7 @@ open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Reflection
 
 type ResolvedEntity = 
-    | REntity of Type 
+    | REntity of Type * isDynamic: bool
     | UEntity of DEntityDef
 
 and ResolvedType = 
@@ -82,7 +82,6 @@ and ObjectValue = obj
 and ObjectFields = { mutable Fields: Map<string,obj> }
 
 let cwt = System.Runtime.CompilerServices.ConditionalWeakTable<obj, ObjectFields>()
-let tdefs = System.Runtime.CompilerServices.ConditionalWeakTable<DEntityRef, Type>()
 
 let getFields obj =
     match cwt.TryGetValue(obj) with 
@@ -103,8 +102,8 @@ let bindAll = BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.In
 /// A sink to report operation of the interpreter
 type Sink = 
 
-    /// Called whenever a call is completed
-    abstract CallAndReturn: DMemberRef * DMemberDef * Type[] * obj[] * Value -> unit
+    /// Called whenever a call is completed, showing caller reference and called method
+    abstract CallAndReturn: DMemberRef option * Choice<MethodInfo, DMemberDef> * Type[] * obj[] * Value -> unit
 
     /// Called whenever a value in a module is computed
     abstract BindValue: DMemberDef * Value -> unit
@@ -255,15 +254,25 @@ let protectEval compgen (r: DRange option) f =
             raise e
 
 /// Context for evaluation/interpretation
-type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
+type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
     let assemblyResolver = defaultArg assemblyResolver System.Reflection.Assembly.Load
+    let dyncompile = defaultArg dyncompile false
     let sink = defaultArg sink emptySink
-    let members = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),(DMemberDef * Value)>(HashIdentity.Structural)
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
+    let methodThunks = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),(DMemberDef * Value)>(HashIdentity.Structural)
+    
+    // For emitting shell types
+    let mutable shellTypeMemberCount = 0
+    let shellTypeThunks = ConcurrentDictionary<int,(DMemberDef * MethodLambdaValue)>(HashIdentity.Structural)
+    let shellTypeBuilders = ConcurrentDictionary<DMemberRefKey,(ConstructorBuilder * Type[])>(HashIdentity.Structural)
+    let shellTypeMethodBuilders = ConcurrentDictionary<DMemberRefKey,(MethodBuilder * Type[])>(HashIdentity.Structural)
+    let shellTypeEntityInfo = ConcurrentDictionary<DEntityRef,DEntityDef * FieldBuilder>(HashIdentity.Structural)
+
     // TODO: add these resolution tables
     //let unionCaseResolutions = ConcurrentDictionary<(DType * DUnionCaseRef),ResolvedUnionCase>(HashIdentity.Structural)
     //let fieldResolutions = ConcurrentDictionary<(DType * DFieldRef),ResolvedField>(HashIdentity.Structural)
     //let methodResolutions = ConcurrentDictionary<...,ResolvedMember>(HashIdentity.Structural)
+
     let methinfoof q = match q with Quotations.DerivedPatterns.Lambdas(_, Quotations.Patterns.Call(_,minfo,_)) -> minfo.GetGenericMethodDefinition() | _ -> failwith "unexpected"
     let op_double = methinfoof <@ double @> 
     let op_single = methinfoof <@ single @> 
@@ -340,14 +349,27 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             let res = 
                 match System.Type.GetType(typeName, assemblyResolver=Func<_,_>(assemblyResolver), typeResolver=null) with 
                 | null -> 
-                    if typeName.Contains("netstandard") then
-                        let otherTypeName = typeName.Replace("netstandard", "mscorlib").Replace("cc7b13ffcd2ddd51", "b77a5c561934e089").Replace("2.0.0.0", "4.0.0.0")
-                        match System.Type.GetType(otherTypeName, assemblyResolver=Func<_,_>(assemblyResolver), typeResolver=null) with 
-                        | null -> failwithf "couldn't resolve type %A, also tried %A" typeName otherTypeName
-                        | t -> REntity t
-                    else
-                        failwithf "couldn't resolve type %A" typeName
-                | t -> REntity t
+                    let try2 =
+                        if typeName.Contains("netstandard") then
+                            let otherTypeName = typeName.Replace("netstandard", "mscorlib").Replace("cc7b13ffcd2ddd51", "b77a5c561934e089").Replace("2.0.0.0", "4.0.0.0")
+                            match System.Type.GetType(otherTypeName, assemblyResolver=Func<_,_>(assemblyResolver), typeResolver=null) with 
+                            | null -> None
+                            | t -> Some t
+                        else None
+                    match try2 with 
+                    //| Some t -> REntity t
+                    //| None ->
+                    //let try3 =
+                    //    match dynAssembly with 
+                    //    | None -> None
+                    //    | Some thisAssembly -> 
+                    //        //for t in thisAssembly.GetTypes() do
+                    //        //    printfn "Available: %s" t.FullName
+                    //        thisAssembly.GetType(typeName) |> Option.ofObj
+                    //match try3 with 
+                    | Some t -> REntity (t, false)
+                    | None -> failwithf "couldn't resolve type %A" typeName
+                | t -> REntity (t, false)
             entityResolutions.[entityRef] <- res
             res
 
@@ -384,8 +406,8 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             else 
                 let (RTypesOrObj env argTypesR) = resolveTypes (env, argTypes)
                 match resolveEntity n, argTypesR with 
-                | REntity e, [| |] -> RType e
-                | REntity e, tys -> RType (e.MakeGenericType(tys))
+                | REntity (e, _), [| |] -> RType e
+                | REntity (e, _), tys -> RType (e.MakeGenericType(tys))
                 | UEntity u1, u2 -> UNamedType (u1, u2)
         | DFunctionType (t1, t2) -> 
             let (RTypeOrObj env t1R) = resolveType (env, t1)
@@ -419,6 +441,21 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             match resolveBaseType (env, typ) with
             | None -> failwith "where is obj()"
             | Some bt -> firstCompiledBaseType (env, bt)
+
+    and (|RTypeOrFail|) xR : Type =
+        match xR with
+        | RType xV -> xV
+        | _ -> failwithf "didn't resolve %A" xR
+
+    and (|TypeBuilderOrFail|) xR : TypeBuilder =
+        match xR with
+        | REntity (:? TypeBuilder as t, _) -> t
+        | _ -> failwithf "not a type builder %A" xR
+
+    and (|RTypesOrFail|) xR : Type[] =
+        match xR with
+        | RTypes xV -> xV 
+        | UTypes us -> Array.map (|RTypeOrFail|) us
 
     and (|RTypeOrObj|) env xR : Type =
         match xR with
@@ -519,19 +556,23 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         else RMethod m
 
     /// Get the lambda value for the method
-    let interpMethod (formalEnv, entityR, methodName, paramTys) = 
+    let interpMethod (formalEnv, entityR, methodName, paramTys, m) = 
         let paramTysR = resolveTypes (formalEnv, paramTys)
         let key = (entityR, methodName, paramTysR)
-        if not (members.ContainsKey(key)) then failwithf "No member found for key %A" key
-        let membDef, minfo = members.[key]
+        if not (methodThunks.ContainsKey(key)) then 
+            failwithf "No member found for key %A at %A" key m
+        let membDef, minfo = methodThunks.[key]
         UMethod (membDef, minfo)
 
     /// Resolve a method name to a lambda value
-    let resolveMethod (v: DMemberRef) = 
+    let resolveMethod (vwhole: DMemberRef) = 
         // TODO: create formal type environment to help resolve overloading by type
         let formalEnv = envEmpty 
+        let v = vwhole.Key
+        
         match resolveEntity v.Entity with 
-        | REntity entityType as eR -> 
+        // We call the actual method when the thing is a compiled type or we're calling a shell type constructor
+        | REntity (entityType, isShell) when not isShell || v.Name = ".ctor" -> 
             let n = v.ArgTypes.Length
             if v.Name = ".ctor" || v.Name = ".cctor" then 
                 match entityType.GetConstructors(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
@@ -539,7 +580,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | _res -> 
                     let (RTypesOrObj formalEnv paramTysV) = resolveTypes (formalEnv, v.ArgTypes)
                     match entityType.GetConstructor(bindAll, null, paramTysV, null) with 
-                    | null -> failwithf "couldn't bind constructor %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
+                    | null -> failwithf "couldn't bind constructor %A for %A at %A" v entityType vwhole.Range //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | cinfo -> RMethod cinfo
             else
                 match entityType.GetMethods(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
@@ -553,30 +594,299 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | _res -> 
                     let (RTypesOrObj formalEnv paramTysV) = resolveTypes (formalEnv, v.ArgTypes)
                     match entityType.GetMethod(v.Name, bindAll, null, paramTysV, null) with 
-                    | null -> failwithf "couldn't bind property %A for %A" v entityType //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
+                    | null -> failwithf "couldn't bind property %A for %A at %A" v entityType vwhole.Range //ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     //| null -> ctxt.InterpMethod(formalEnv, eR, nm, paramTys)
                     | minfo -> RMethod minfo
         | eR -> 
-            interpMethod(formalEnv, eR, v.Name, v.ArgTypes)
+            interpMethod(formalEnv, eR, v.Name, v.ArgTypes, vwhole.Range)
+
+    member ctxt.EvalShellMethodBody(memberId: int, typeArgsV: Type[], argsV: obj[]) : obj = 
+        printfn "EvalShellMethodBody: memberId = %d, typeArgsV=%A, args = %A" memberId typeArgsV argsV
+        let membDef, fM = shellTypeThunks.[memberId] 
+        let (MethodLambdaValue f) = fM
+        let res = f (typeArgsV, argsV) 
+        sink.CallAndReturn(None (* no caller references available for these invokes *), Choice2Of2 membDef, typeArgsV, argsV, Value res)
+        res
+
+    /// Dynamically emit "shell" .NET type definitions for types with include thunks for any
+    /// virtual methods and interface implementations, and constructors to actually make an object of the
+    /// correct type.
+    member ctxt.DefineShellTypes(decls: DDecl[]) = 
+        let asmB = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run)
+        let modB = asmB.DefineDynamicModule ("Module")
+
+        printfn "defining types..."
+        let rec loop (decls, encTypB: TypeBuilder option) =
+            for decl in decls do 
+                match decl with 
+                | DDeclEntity (entityDef, subDecls) -> 
+                    let typB = 
+                        match encTypB with 
+                        | None -> modB.DefineType(entityDef.NameX)
+                        | Some tB -> tB.DefineNestedType(entityDef.NameX)
+                    let entityRef = DEntityRef entityDef.QualifiedName
+                    let ctxtFld = typB.DefineField("$ctxt", typeof<EvalContext>, FieldAttributes.Static ||| FieldAttributes.Public)
+                    shellTypeEntityInfo.[entityRef] <- (entityDef, ctxtFld)
+                    entityResolutions.[entityRef] <- REntity (typB, true)
+                    if entityDef.GenericParameters.Length > 0 then
+                        typB.DefineGenericParameters([| for p in entityDef.GenericParameters -> p.Name |]) |> ignore
+                    loop (subDecls, Some typB)
+                | _ -> ()
+        loop (decls, None)
+
+        let enterTypeDef (entityDef: DEntityDef) =
+            let (TypeBuilderOrFail typB) = entityResolutions.[DEntityRef entityDef.QualifiedName]
+            let env = (envEmpty, entityDef.GenericParameters, typB.GenericTypeParameters) |||> Array.fold2 (fun env p a -> bindType env p a)
+            typB, env
+
+        printfn "defining base type and define the interfaces..."
+        /// Set the base type and define the interfaces
+        let rec phase2(decls: DDecl[]) = 
+            for decl in decls do
+                match decl with 
+                | DDeclEntity (entityDef, subDecls) -> 
+                    let typB, env  = enterTypeDef entityDef
+                    match entityDef.BaseType with 
+                    | None -> ()
+                    | Some b -> 
+                        let (RTypeOrFail t) = resolveType (env, b) 
+                        typB.SetParent(t)
+                    for i in entityDef.DeclaredInterfaces do
+                        let (RTypeOrFail t) = resolveType (env, i) 
+                        typB.AddInterfaceImplementation(t)
+                    phase2(subDecls)
+                | _ -> ()
+        phase2(decls)
+
+        printfn "defining define the methods..."
+
+        /// Define the methods
+        let rec phase3(decls: DDecl[]) = 
+            for decl in decls do
+                match decl with 
+                | DDeclEntity (entityDef, subDecls) -> 
+                    let typB, env  = enterTypeDef entityDef
+                    for f in entityDef.DeclaredFields do   
+                        let (RTypeOrFail ft) = resolveType (env, f.FieldType) 
+                        let attrs = (FieldAttributes.Public |||  (if f.IsStatic then FieldAttributes.Static else enum 0))
+                        typB.DefineField(f.Name, ft, attrs) |> ignore
+
+                    phase3(subDecls)
+                | DDeclMember (membDef, _body, _isLiveCheck) -> 
+                    let membRef = membDef.Ref
+                    let entityDef, _ctxtFld = shellTypeEntityInfo.[membDef.EnclosingEntity]
+                    let typB, env  = enterTypeDef entityDef
+                    let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
+                    let paramTypesR = resolveTypes(env, paramTypes) 
+                    let (RTypesOrFail paramTypesT) = paramTypesR
+                    let (RTypeOrFail returnTypeT) = resolveType(env, membDef.ReturnType) 
+                    if membDef.Name = ".ctor" then
+                        
+                        // Strip off the call to the base class constructor and emit it in compiled code
+                        // since we can't interpret that
+                        //
+                        // TODO : base ctor calls must currently take no arguments (since we
+                        // don't have an expression compiler - we could interpret these)
+                        let attrs = MethodAttributes.Public 
+                        let mB = typB.DefineConstructor(attrs, CallingConventions.Standard,paramTypesT)
+                        shellTypeBuilders.[membRef.Key] <- (mB, paramTypesT)
+                    elif membDef.IsOverride then
+
+                        let attrs = 
+                            MethodAttributes.Public 
+                            //|||  (if membDef.Name = ".ctor" then enum 0 else MethodAttributes.)
+                            |||  (if membDef.IsInstance then enum 0 else MethodAttributes.Static)
+                            |||  (if membDef.IsOverride then enum 0 else MethodAttributes.Virtual)
+                        let mB = typB.DefineMethod(membDef.Name, attrs, returnTypeT, paramTypesT)
+                        if membDef.GenericParameters.Length > 0 then 
+                            mB.DefineGenericParameters([| for p in membDef.GenericParameters -> p.Name |]) |> ignore
+                        shellTypeMethodBuilders.[membRef.Key] <- (mB, paramTypesT)
+                | _ -> ()
+        phase3(decls)
+
+        /// Fill in the body of the constructors and virtual/interface method stubs
+        let rec phase4(decls: DDecl[]) = 
+            for decl in decls do
+                match decl with 
+                | DDeclEntity (_entityDef, subDecls) ->
+                    phase4(subDecls)
+                | DDeclMember (membDef, body, _isLiveCheck) -> 
+                    let membRef = membDef.Ref
+                    let entityDef, ctxtFld = shellTypeEntityInfo.[membDef.EnclosingEntity]
+                    let typB, env  = enterTypeDef entityDef
+                    if membDef.Name = ".ctor" then
+                        let mB, paramTypesT = shellTypeBuilders.[membRef.Key]
+                        
+                        // Strip off the call to the base class constructor and emit it in compiled code
+                        // since we can't interpret that
+                        //
+                        // TODO : base ctor calls must currently take no arguments (since we
+                        // don't have an expression compiler - we could interpret these)
+                        let ilg = mB.GetILGenerator()
+                        shellTypeMemberCount <- shellTypeMemberCount + 1
+                        let memberId = shellTypeMemberCount
+
+                        // Check if this ctor has a base class constructor or self constructor
+                        let bctor, bctorTypeArgs, initCode = 
+                            match body with
+                            // base calls without arguments
+                            | DExpr.Sequential(DExpr.Call(None, bctor, bctorTypeArgs, [| |], [| |], _), initCode) -> 
+                                 bctor, bctorTypeArgs, initCode
+                            // base calls with arguments
+                            | DExpr.Sequential(DExpr.Call(None, bctor, bctorTypeArgs, [| |], _, _), rest) -> 
+                                 failwith "TODO: calls to base class constructors taking arguments"
+                            // self-init calls
+                            | DExpr.Call(None, bctor, bctorTypeArgs, [| |], args, _) -> 
+                                 bctor, bctorTypeArgs, body
+                            | _ -> 
+                                failwithf "TODO: unknown constructor body %A" body
+
+                        let bcinfo = 
+                            match shellTypeBuilders.TryGetValue(bctor.Key) with 
+                            | true, (v, _) -> (v :> ConstructorInfo)
+                            | _ -> 
+                            match resolveMethod bctor with
+                            | RMethod (:? ConstructorInfo as bcinfo) -> bcinfo
+                            | _ -> failwith "unexpected: couldn't resolve ctor"
+                        let ibcinfo = 
+                            if bcinfo.DeclaringType.IsGenericType then 
+                                let (RTypesOrFail bctorTypeArgsT) = resolveTypes(env, bctorTypeArgs) 
+                                let tinfo = bcinfo.DeclaringType.MakeGenericType(bctorTypeArgsT)
+                                tinfo.GetConstructors(bindAll) |> Array.find (fun cinfo2 -> cinfo2.MetadataToken = bcinfo.MetadataToken)
+                            else bcinfo
+                        ilg.Emit(OpCodes.Ldarg, 0)
+                        ilg.Emit(OpCodes.Call, ibcinfo)
+                        // TODO: for inheritance from interpreted types we should first
+                        // call init code thunks for the base ctor
+                        ilg.Emit(OpCodes.Ldsfld, ctxtFld)
+                        ilg.Emit(OpCodes.Ldc_I4, memberId)
+
+                        // Create the array of type arguments 
+                        let gps = typB.GetGenericArguments()
+                        ilg.Emit(OpCodes.Ldc_I4, gps.Length)
+                        ilg.Emit(OpCodes.Newarr, typeof<obj>)
+                        for i in 0 .. gps.Length - 1 do
+                            ilg.Emit(OpCodes.Dup)
+                            ilg.Emit(OpCodes.Ldc_I4, i)
+                            ilg.Emit(OpCodes.Ldtoken,gps.[i])
+                            let meth = typeof<System.Type>.GetMethod("GetTypeFromHandle")
+                            ilg.Emit(OpCodes.Call, meth)
+                            ilg.Emit(OpCodes.Stelem_Ref)
+
+                        // Create the array of 'this' plus arguments 
+                        let adjust = 1
+                        ilg.Emit(OpCodes.Ldc_I4, paramTypesT.Length+adjust)
+                        ilg.Emit(OpCodes.Newarr, typeof<obj>)
+                        
+                        ilg.Emit(OpCodes.Dup)
+                        ilg.Emit(OpCodes.Ldc_I4, 0)
+                        ilg.Emit(OpCodes.Ldarg, 0)
+                        if typB.IsValueType then
+                            ilg.Emit(OpCodes.Box, typB)
+                        ilg.Emit(OpCodes.Stelem_Ref)
+                        for i in 0 .. paramTypesT.Length  - 1 do
+                            ilg.Emit(OpCodes.Dup)
+                            ilg.Emit(OpCodes.Ldc_I4, i+adjust)
+                            ilg.Emit(OpCodes.Ldarg, i+adjust)
+                            if paramTypesT.[i].IsValueType then
+                                ilg.Emit(OpCodes.Box, paramTypesT.[i])
+                            ilg.Emit(OpCodes.Stelem_Ref)
+
+                        // call the initCode
+                        ilg.Emit(OpCodes.Call, typeof<EvalContext>.GetMethod("EvalShellMethodBody"))
+                        ilg.Emit(OpCodes.Pop)
+                        ilg.Emit(OpCodes.Ret)
+
+                        // For primary constructors the thunk holds the remainder of
+                        // the initialization code
+
+                        let thunk = ctxt.EvalMethodLambda (envEmpty, false, true, membDef.GenericParameters, membDef.Parameters, initCode)
+                        shellTypeThunks.[memberId] <- (membDef, thunk)
+                    elif membDef.IsOverride then
+                        let mB, paramTypesT = shellTypeMethodBuilders.[membRef.Key]
+                        let ilg = mB.GetILGenerator()
+                        shellTypeMemberCount <- shellTypeMemberCount + 1
+                        let memberId = shellTypeMemberCount
+                        ilg.Emit(OpCodes.Ldsfld, ctxtFld)
+                        ilg.Emit(OpCodes.Ldc_I4, memberId)
+
+                        // Create the array of type arguments 
+                        let gps = Array.append (typB.GetGenericArguments()) (mB.GetGenericArguments())
+                        ilg.Emit(OpCodes.Ldc_I4, gps.Length)
+                        ilg.Emit(OpCodes.Newarr, typeof<obj>)
+                        for i in 0 .. gps.Length - 1 do
+                            ilg.Emit(OpCodes.Dup)
+                            ilg.Emit(OpCodes.Ldc_I4, i)
+                            ilg.Emit(OpCodes.Ldtoken,gps.[i])
+                            let meth = typeof<System.Type>.GetMethod("GetTypeFromHandle")
+                            ilg.Emit(OpCodes.Call, meth)
+                            ilg.Emit(OpCodes.Stelem_Ref)
+
+                        // Create the array of 'this' plus arguments 
+                        let adjust = (if membDef.IsInstance then 1 else 0)
+                        ilg.Emit(OpCodes.Ldc_I4, paramTypesT.Length+adjust)
+                        ilg.Emit(OpCodes.Newarr, typeof<obj>)
+                        if adjust = 1 then 
+                            ilg.Emit(OpCodes.Dup)
+                            ilg.Emit(OpCodes.Ldc_I4, 0)
+                            ilg.Emit(OpCodes.Ldarg, 0)
+                            if typB.IsValueType then
+                                ilg.Emit(OpCodes.Box, typB)
+                            ilg.Emit(OpCodes.Stelem_Ref)
+                        for i in 0 .. paramTypesT.Length  - 1 do
+                            ilg.Emit(OpCodes.Dup)
+                            ilg.Emit(OpCodes.Ldc_I4, i+adjust)
+                            ilg.Emit(OpCodes.Ldarg, i+adjust)
+                            if paramTypesT.[i].IsValueType then
+                                ilg.Emit(OpCodes.Box, paramTypesT.[i])
+                            ilg.Emit(OpCodes.Stelem_Ref)
+
+                        // call the method
+                        ilg.Emit(OpCodes.Call, typeof<EvalContext>.GetMethod("EvalShellMethodBody"))
+                        ilg.Emit(OpCodes.Ret)
+                        
+                        let thunk = ctxt.EvalMethodLambda (envEmpty, false, membDef.IsInstance, membDef.GenericParameters, membDef.Parameters, body)
+                        shellTypeThunks.[memberId] <- (membDef, thunk)
+                | _ -> ()
+        phase4(decls)
+        let rec phaseFinal(decls) =
+            for decl in decls do
+                match decl with 
+                | DDeclEntity (entityDef, subDecls) -> 
+                    let typB, env  = enterTypeDef entityDef
+                    typB.CreateTypeInfo() |> ignore
+                    
+                    // Store the returning context in a static field of each generated type
+                    if not typB.IsEnum && not typB.IsInterface then
+                        typB.GetField("$ctxt").SetValue(null, ctxt)
+                    
+                    phaseFinal(subDecls)
+                | _ -> ()
+        phaseFinal(decls)
 
     /// Add the declarations for the types and methods
     member ctxt.AddDecls(decls: DDecl[]) = 
+        
+        if dyncompile then 
+            ctxt.DefineShellTypes(decls)
+        
         let env = envEmpty
         for decl in decls do
             match decl with 
 
             | DDeclEntity (entityDef, subDecls) -> 
-                let entityName = entityDef.Name
-                // Override any existing resolution
-                entityResolutions.[DEntityRef entityName] <- UEntity entityDef
+                // Override any existing resolution if no dynamic assembly is available
+                if not dyncompile then
+                    entityResolutions.[DEntityRef entityDef.QualifiedName] <- UEntity entityDef
+                   
                 ctxt.AddDecls(subDecls)
 
             | DDeclMember (membDef, body, _isLiveCheck) -> 
                 let ty = resolveEntity(membDef.EnclosingEntity)
-                let paramTypes = membDef.Parameters |> Array.map (fun p -> p.Type) 
+                let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
                 let paramTypesR = resolveTypes(env, paramTypes) 
                 let thunk = ctxt.EvalMethodLambda (envEmpty, (membDef.Name = ".ctor"), membDef.IsInstance, membDef.GenericParameters, membDef.Parameters, body)
-                members.[(ty, membDef.Name, paramTypesR)] <- (membDef, Value thunk)
+                methodThunks.[(ty, membDef.Name, paramTypesR)] <- (membDef, Value thunk)
 
             | _ -> ()
 
@@ -620,7 +930,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                     match res with 
                     | Choice1Of2 res -> 
                         sink.BindValue(membDef, res)
-                        members.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
+                        methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
                     | Choice2Of2 err -> 
                         yield (err, err.EvalLocationStack) 
 
@@ -643,12 +953,12 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 if membDef.IsValueDef then 
                     let ty = resolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.EvalExpr (env, body) 
-                    members.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
+                    methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
             | DDecl.InitAction (expr, range) -> 
                 ctxt.EvalExpr (env, expr) |> ignore
 
     member _.GetExprDeclResult(ty, memberName) = 
-        members.[(ty, memberName, RTypes [| |])]
+        methodThunks.[(ty, memberName, RTypes [| |])]
 
     member ctxt.EvalExpr(env, expr: DExpr) : Value = 
         match expr with 
@@ -797,11 +1107,11 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 | _ -> failwithf "didn't find mutable value in the environment to write" 
 
             | Choice2Of2 mref -> 
-                let entityR = resolveEntity mref.Entity
-                let key = (entityR, mref.Name, RTypes [| |])
-                if not (members.ContainsKey(key)) then failwithf "No member found for key %A" key
-                let membDef, _ = members.[key]
-                members.[key] <- (membDef, Value valueExprV)
+                let entityR = resolveEntity mref.Key.Entity
+                let key = (entityR, mref.Key.Name, RTypes [| |])
+                if not (methodThunks.ContainsKey(key)) then failwithf "No member found for key %A at %A" key mref.Range
+                let membDef, _ = methodThunks.[key]
+                methodThunks.[key] <- (membDef, Value valueExprV)
 
             Value null
 
@@ -869,7 +1179,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
         | UMethod (membDef, Value (:? MethodLambdaValue as fM )), RTypesOrObj env typeArgsV -> 
             let (MethodLambdaValue f) = fM
             let res = f (typeArgsV, argsV) |> Value
-            sink.CallAndReturn(objCtor, membDef, typeArgsV, argsV, res)
+            sink.CallAndReturn(Some objCtor, Choice2Of2 membDef, typeArgsV, argsV, res)
             res
         | _ -> 
             failwithf "unexpected constructor %A at types %A" methR typeArgsR
@@ -921,10 +1231,10 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             valueThunk.Value <- v)
         ctxt.EvalExpr (envInner, bodyExpr)
 
-    member ctxt.EvalCall(env, objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) =
+    member ctxt.EvalCall(env, objExprOpt, membRef, typeArgs1, typeArgs2, argExprs) =
         let objOptV = ctxt.EvalExprOpt (env, objExprOpt)
         let argsV = ctxt.EvalExprs (env, argExprs)
-        let methR = resolveMethod (memberOrFunc)
+        let methR = resolveMethod membRef
 
         // These primitives don't have dynamic invocation implementations
         match methR with 
@@ -988,8 +1298,10 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
                 elif minfo.IsGenericMethod then 
                     minfo.MakeGenericMethod(typeArgs2V) 
                 else minfo
-            let res = 
-                protectInvoke (fun () -> iminfo.Invoke(objOptV, argsV)) |> Value
+
+            let res = protectInvoke (fun () -> iminfo.Invoke(objOptV, argsV)) |> Value
+
+            sink.CallAndReturn(Some membRef, Choice1Of2 minfo, Array.append typeArgs1V typeArgs2V, argsV, res)
 
             // Copy back the out parameters - note that argsV will have been mutates
             let parameters = minfo.GetParameters()
@@ -1013,7 +1325,7 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
             let callArgsV = (match objOptV with null -> argsV | objV -> Array.append [| objV |] argsV)
             let callTypeArgsV = Array.append typeArgs1V typeArgs2V
             let res = f (callTypeArgsV, callArgsV) |> Value
-            sink.CallAndReturn(memberOrFunc, membDef, callTypeArgsV, argsV, res)
+            sink.CallAndReturn(Some membRef, Choice2Of2 membDef, callTypeArgsV, argsV, res)
             res
 
         | UMethod (_membDef, Value v), RTypes [| |], RTypes [| |] when argExprs.Length = 0 -> 
@@ -1153,19 +1465,20 @@ type EvalContext (?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
 
     member ctxt.EvalSequential(env, firstExpr, secondExpr) =
         let res = ctxt.EvalExpr (env, firstExpr)
-        // inherits calls record the object
-        match firstExpr with 
-        | DExpr.Call(_, memberOrFunc, _, _, _, _)
-        | DExpr.NewObject(memberOrFunc, _, _) -> 
-            let methR = resolveMethod (memberOrFunc)
-            match methR with
-            | RMethod (:? ConstructorInfo) -> 
-                match env.Vals.TryGetValue "$this" with 
-                | true, v -> 
-                    v.Value <- res.Value
+        if not dyncompile then
+            // inherits calls record the object
+            match firstExpr with 
+            | DExpr.Call(_, memberOrFunc, _, _, _, _)
+            | DExpr.NewObject(memberOrFunc, _, _) -> 
+                let methR = resolveMethod (memberOrFunc)
+                match methR with
+                | RMethod (:? ConstructorInfo) -> 
+                    match env.Vals.TryGetValue "$this" with 
+                    | true, v -> 
+                        v.Value <- res.Value
+                    | _ -> ()
                 | _ -> ()
-            | _ -> ()
-        | _-> ()
+            | _-> ()
         ctxt.EvalExpr (env, secondExpr)
 
     member ctxt.EvalIfThenElse(env, guardExpr, thenExpr, elseExpr) =

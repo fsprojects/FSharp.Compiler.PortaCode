@@ -8,6 +8,7 @@ open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
 open FSharp.Compiler.PortaCode.FromCompilerService
 open System
+open System.Reflection
 open System.Collections.Generic
 open System.IO
 open FSharp.Compiler.SourceCodeServices
@@ -20,8 +21,9 @@ let checker = FSharpChecker.Create(keepAssemblyContents = true)
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable dump = false
-    let mutable livechecksOnly = false
-    let mutable watch = false
+    let mutable livecheck = false
+    let mutable dyncompile = false
+    let mutable watch = true
     let mutable useEditFiles = false
     let mutable writeinfo = true
     let mutable webhook = None
@@ -46,9 +48,11 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
                 elif arg = "--livecheck" then 
-                    livechecksOnly <- true
+                    livecheck <- true
                     writeinfo <- true
                     useEditFiles <- true
+                elif arg = "--dyncompile" then 
+                    dyncompile <- true
                 elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
@@ -78,6 +82,7 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
                    printfn "                     Also write an info file based on results of evaluation."
                    printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"
+                   printfn "   --dyncompile      Dynamically compile and load so full .NET types exist"
                    printfn "   <other-args>      All other args are assumed to be extra F# command line arguments, e.g. --define:FOO"
                    exit 1
                 else yield arg  |]
@@ -138,8 +143,9 @@ let ProcessCommandLine (argv: string[]) =
             match sourceFiles with 
             | [| script |] when script.EndsWith(".fsx") ->
                 let text = readFile script
-                let otherFlags = Array.append otherFlags [| "--targetprofile:netcore"|]
+                let otherFlags = Array.append otherFlags [| "--targetprofile:netcore"; |]
                 let options, errors = checker.GetProjectOptionsFromScript(script, SourceText.ofString text, otherFlags=otherFlags, assumeDotNetFramework=false) |> Async.RunSynchronously
+                let options = { options with OtherOptions = Array.append options.OtherOptions [| "--target:library" |] }
                 if errors.Length > 0 then 
                     for error in errors do 
                         printfn "%s" (error.ToString())
@@ -162,11 +168,11 @@ let ProcessCommandLine (argv: string[]) =
 
     let rec checkFile count sourceFile =         
         try 
-            let _, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, SourceText.ofString (readFile sourceFile), options) |> Async.RunSynchronously  
+            let parseResults, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, SourceText.ofString (readFile sourceFile), options) |> Async.RunSynchronously  
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
                 failwith "unexpected aborted"
-                Result.Error (None, None, None)
+                Result.Error (parseResults.ParseTree, None, None, None)
 
             | FSharpCheckFileAnswer.Succeeded res -> 
                 let mutable hasErrors = false
@@ -176,16 +182,16 @@ let ProcessCommandLine (argv: string[]) =
                         hasErrors <- true
 
                 if hasErrors then 
-                    Result.Error (None, Some res.Errors, res.ImplementationFile)
+                    Result.Error (parseResults.ParseTree, None, Some res.Errors, res.ImplementationFile)
                 else
-                    Result.Ok res.ImplementationFile 
+                    Result.Ok (parseResults.ParseTree, res.ImplementationFile)
         with 
         | :? System.IO.IOException when count = 0 -> 
             System.Threading.Thread.Sleep 500
             checkFile 1 sourceFile
         | exn -> 
             printfn "%s" (exn.ToString())
-            Result.Error (Some exn, None, None)
+            Result.Error (None, Some exn, None, None)
 
     let keepRanges = not dump
     let convFile (i: FSharpImplementationFileContents) =         
@@ -198,17 +204,17 @@ let ProcessCommandLine (argv: string[]) =
             | file :: rest -> 
                 match checkFile 0 (Path.GetFullPath(file)) with 
 
-                // Note, if livechecksOnly are on, we continue on regardless of errors
-                | Result.Error iopt when not livechecksOnly -> 
+                // Note, if livecheck are on, we continue on regardless of errors
+                | Result.Error iopt when not livecheck -> 
                     printfn "fslive: ERRORS for %s" file
                     Result.Error iopt
 
-                | Result.Error ((_, _, None) as info) -> Result.Error info
-                | Result.Ok None -> Result.Error (None, None, None)
-                | Result.Error (_, _, Some i)
-                | Result.Ok (Some i) ->
+                | Result.Error ((_, _, _, None) as info) -> Result.Error info
+                | Result.Ok (_, None) -> Result.Error (None, None, None, None)
+                | Result.Error (parseTree, _, _, Some implFile)
+                | Result.Ok (parseTree, Some implFile) ->
                     printfn "fslive: GOT PortaCode for %s" file
-                    loop rest (i :: acc)
+                    loop rest ((parseTree, implFile) :: acc)
             | [] -> Result.Ok (List.rev acc)
         loop (List.ofArray files) []
 
@@ -351,11 +357,12 @@ let ProcessCommandLine (argv: string[]) =
 
         emitInfoFile sourceFile lines
 
+    let mutable assemblyNameId = 0
     /// Evaluate the declarations using the interpreter
     let evaluateDecls fileContents = 
         let assemblyTable = 
             dict [| for r in options.OtherOptions do 
-                        printfn "typeof<obj>.Assembly.Location = %s" typeof<obj>.Assembly.Location
+                        //printfn "typeof<obj>.Assembly.Location = %s" typeof<obj>.Assembly.Location
                         if r.StartsWith("-r:") && not (r.Contains(".NETFramework")) && not (r.Contains("Microsoft.NETCore.App")) then 
                             let assemName = r.[3..]
                             //printfn "Script: pre-loading referenced assembly %s " assemName
@@ -376,17 +383,31 @@ let ProcessCommandLine (argv: string[]) =
             if writeinfo then 
                 { new Sink with 
                      member __.CallAndReturn(mref, mdef, _typeArgs, args, res) = 
+                         let paramNames = 
+                            match mdef with 
+                             | Choice1Of2 minfo -> [| for p in minfo.GetParameters() -> p.Name |]
+                             | Choice2Of2 mdef -> [| for p in mdef.Parameters -> p.Name |]
+                         let isValue = 
+                            match mdef with 
+                             | Choice1Of2 minfo -> false
+                             | Choice2Of2 mdef -> mdef.IsValue
                          let lines = 
-                            [ for (p, arg) in Seq.zip mdef.Parameters args do 
-                                  yield (sprintf "%s:" p.Name, arg)
-                              if mdef.IsValue then 
+                            [ for (p, arg) in Seq.zip paramNames args do 
+                                  yield (sprintf "%s:" p, arg)
+                              if isValue then 
                                   yield ("value:", res.Value)
                               else
                                   yield ("return:", res.Value) ]
-                         mdef.Range |> Option.iter (fun r -> 
-                             tooltips.Add(r, lines, true))
-                         mref.Range |> Option.iter (fun r -> 
-                             tooltips.Add(r, lines, true))
+                         match mdef with 
+                         | Choice1Of2 _ -> ()
+                         | Choice2Of2 mdef -> 
+                             mdef.Range |> Option.iter (fun r -> 
+                                 tooltips.Add(r, lines, true))
+                         match mref with 
+                         | None -> ()
+                         | Some mref-> 
+                             mref.Range |> Option.iter (fun r -> 
+                                 tooltips.Add(r, lines, true))
 
                      member __.BindValue(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
@@ -403,26 +424,44 @@ let ProcessCommandLine (argv: string[]) =
             else  
                 None
 
-        let ctxt = EvalContext(assemblyResolver, ?sink=sink)
+        assemblyNameId <- assemblyNameId + 1
+        let assemblyName = AssemblyName("Eval" + string assemblyNameId)
+        let ctxt = EvalContext(assemblyName, dyncompile, assemblyResolver, ?sink=sink)
         let fileConvContents = [| for i in fileContents -> convFile i |]
 
         for (_, contents) in fileConvContents do 
             ctxt.AddDecls(contents.Code)
 
-        let allErrors = ResizeArray<_>()
         for (sourceFile, ds) in fileConvContents do 
             printfn "evaluating decls.... " 
-            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livechecksOnly)
+            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
 
             if writeinfo then 
                 writeInfoFile (tooltips.ToArray()) sourceFile errors
-            for (exn, _range) in errors do
+            for (exn, locs) in errors do
                 if watch then
                     printfn "fslive: exception: %A" (exn.ToString())
+                    for loc in locs do 
+                        printfn "   --> %O" loc
                 else
                     raise exn
 
             printfn "...evaluated decls" 
+
+    let mutable counter = 0
+    //let produceDynamicAssembly parseTrees =
+    //    //let allFlags = Array.append options.OtherOptions options.SourceFiles
+    //    //for f in allFlags do
+    //    //   printfn "  option %s" f
+    //    counter <- counter + 1
+    //    let assemName = Path.GetFileNameWithoutExtension(options.ProjectFileName) + string counter
+    //    let diagnostics, _, assembly = checker.CompileToDynamicAssembly(parseTrees, assemName, [], None) |> Async.RunSynchronously  
+    //    if diagnostics |> Array.exists (fun d -> d.Severity = FSharpErrorSeverity.Error) then
+    //        for d in diagnostics do
+    //            printfn "Compilation error: %A" d
+    //        None
+    //    else
+    //        assembly
 
     let changed why _ =
         try 
@@ -433,26 +472,36 @@ let ProcessCommandLine (argv: string[]) =
 
             | Result.Ok allFileContents -> 
 
+            let parseTrees = List.choose fst allFileContents
+            let implFiles = List.map snd allFileContents
             match webhook with 
             | Some hook ->
-                sendToWebHook hook allFileContents
+                sendToWebHook hook implFiles
                 Result.Ok()
             | None -> 
 
             if not dump && webhook.IsNone then 
+                //let dynAssembly =
+                //    if dyncompile then 
+                //        produceDynamicAssembly parseTrees
+                //    else 
+                //        None
+
                 printfn "fslive: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
-                evaluateDecls allFileContents 
+                evaluateDecls implFiles 
 
             // The default is to dump
             if dump && webhook.IsNone then 
-                let fileConvContents = jsonFiles (Array.ofList allFileContents)
+                let fileConvContents = jsonFiles (Array.ofList implFiles)
 
                 printfn "%A" fileConvContents
             Result.Ok()
 
         with err when watch -> 
             printfn "fslive: exception: %A" (err.ToString())
-            Result.Error (Some err, None, None)
+            for loc in err.EvalLocationStack do 
+                printfn "   --> %O" loc
+            Result.Error (None, Some err, None, None)
 
     for o in options.OtherOptions do 
         printfn "compiling, option %s" o
