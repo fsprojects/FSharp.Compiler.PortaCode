@@ -131,14 +131,15 @@ let ProcessCommandLine (argv: string[]) =
             
         | None -> 
             let sourceFiles, otherFlags2 = fsharpArgs |> Array.partition (fun arg -> arg.EndsWith(".fs") || arg.EndsWith(".fsi") || arg.EndsWith(".fsx"))
-            let otherFlags = [| yield! otherFlags; yield! otherFlags2 |]
+            let otherFlags =[| yield! otherFlags; yield! otherFlags2 |]
             let sourceFiles = sourceFiles |> Array.map Path.GetFullPath 
             printfn "CurrentDirectory = %s" Environment.CurrentDirectory
         
             match sourceFiles with 
             | [| script |] when script.EndsWith(".fsx") ->
                 let text = readFile script
-                let options, errors = checker.GetProjectOptionsFromScript(script, SourceText.ofString text, otherFlags=otherFlags) |> Async.RunSynchronously
+                let otherFlags = Array.append otherFlags [| "--targetprofile:netcore"|]
+                let options, errors = checker.GetProjectOptionsFromScript(script, SourceText.ofString text, otherFlags=otherFlags, assumeDotNetFramework=false) |> Async.RunSynchronously
                 if errors.Length > 0 then 
                     for error in errors do 
                         printfn "%s" (error.ToString())
@@ -354,7 +355,8 @@ let ProcessCommandLine (argv: string[]) =
     let evaluateDecls fileContents = 
         let assemblyTable = 
             dict [| for r in options.OtherOptions do 
-                        if r.StartsWith("-r:") && not (r.Contains(".NETFramework")) then 
+                        printfn "typeof<obj>.Assembly.Location = %s" typeof<obj>.Assembly.Location
+                        if r.StartsWith("-r:") && not (r.Contains(".NETFramework")) && not (r.Contains("Microsoft.NETCore.App")) then 
                             let assemName = r.[3..]
                             //printfn "Script: pre-loading referenced assembly %s " assemName
                             match System.Reflection.Assembly.LoadFrom(assemName) with 
@@ -452,8 +454,8 @@ let ProcessCommandLine (argv: string[]) =
             printfn "fslive: exception: %A" (err.ToString())
             Result.Error (Some err, None, None)
 
-    //for o in options.OtherOptions do 
-    //    printfn "compiling, option %s" o
+    for o in options.OtherOptions do 
+        printfn "compiling, option %s" o
 
     if watch then 
         // Send an immediate changed() event
