@@ -254,9 +254,9 @@ let protectEval compgen (r: DRange option) f =
             raise e
 
 /// Context for evaluation/interpretation
-type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
+type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver: (AssemblyName -> Assembly), ?sink: Sink)  =
     let assemblyResolver = defaultArg assemblyResolver System.Reflection.Assembly.Load
-    let dyncompile = defaultArg dyncompile false
+    let dyntypes = defaultArg dyntypes false
     let sink = defaultArg sink emptySink
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
     let methodThunks = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),(DMemberDef * Value)>(HashIdentity.Structural)
@@ -601,11 +601,12 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
             interpMethod(formalEnv, eR, v.Name, v.ArgTypes, vwhole.Range)
 
     member ctxt.EvalShellMethodBody(memberId: int, typeArgsV: Type[], argsV: obj[]) : obj = 
-        printfn "EvalShellMethodBody: memberId = %d, typeArgsV=%A, args = %A" memberId typeArgsV argsV
+        //printfn "EvalShellMethodBody: memberId = %d, typeArgsV=%A, args = %A" memberId typeArgsV argsV
         let membDef, fM = shellTypeThunks.[memberId] 
         let (MethodLambdaValue f) = fM
         let res = f (typeArgsV, argsV) 
-        sink.CallAndReturn(None (* no caller references available for these invokes *), Choice2Of2 membDef, typeArgsV, argsV, Value res)
+        //if membDef.Name <> "ToString" then 
+        //    sink.CallAndReturn(None (* no caller references available for these invokes *), Choice2Of2 membDef, typeArgsV, argsV, Value res)
         res
 
     /// Dynamically emit "shell" .NET type definitions for types with include thunks for any
@@ -696,7 +697,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
                             MethodAttributes.Public 
                             //|||  (if membDef.Name = ".ctor" then enum 0 else MethodAttributes.)
                             |||  (if membDef.IsInstance then enum 0 else MethodAttributes.Static)
-                            |||  (if membDef.IsOverride then enum 0 else MethodAttributes.Virtual)
+                            |||  (if membDef.IsOverride then MethodAttributes.Virtual else enum 0 )
                         let mB = typB.DefineMethod(membDef.Name, attrs, returnTypeT, paramTypesT)
                         if membDef.GenericParameters.Length > 0 then 
                             mB.DefineGenericParameters([| for p in membDef.GenericParameters -> p.Name |]) |> ignore
@@ -731,6 +732,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
                             match body with
                             // base calls without arguments
                             | DExpr.Sequential(DExpr.Call(None, bctor, bctorTypeArgs, [| |], [| |], _), initCode) -> 
+                                 bctor, bctorTypeArgs, initCode
+                            | DExpr.Sequential(DExpr.NewObject(bctor, bctorTypeArgs, [| |]), initCode) -> 
                                  bctor, bctorTypeArgs, initCode
                             // base calls with arguments
                             | DExpr.Sequential(DExpr.Call(None, bctor, bctorTypeArgs, [| |], _, _), rest) -> 
@@ -867,7 +870,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
     /// Add the declarations for the types and methods
     member ctxt.AddDecls(decls: DDecl[]) = 
         
-        if dyncompile then 
+        if dyntypes then 
             ctxt.DefineShellTypes(decls)
         
         let env = envEmpty
@@ -876,7 +879,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
 
             | DDeclEntity (entityDef, subDecls) -> 
                 // Override any existing resolution if no dynamic assembly is available
-                if not dyncompile then
+                if not dyntypes then
                     entityResolutions.[DEntityRef entityDef.QualifiedName] <- UEntity entityDef
                    
                 ctxt.AddDecls(subDecls)
@@ -1465,7 +1468,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyncompile: bool, ?assemblyResolv
 
     member ctxt.EvalSequential(env, firstExpr, secondExpr) =
         let res = ctxt.EvalExpr (env, firstExpr)
-        if not dyncompile then
+        if not dyntypes then
             // inherits calls record the object
             match firstExpr with 
             | DExpr.Call(_, memberOrFunc, _, _, _, _)

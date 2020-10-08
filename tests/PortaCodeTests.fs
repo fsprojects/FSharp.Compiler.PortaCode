@@ -170,7 +170,7 @@ PROJ.fs"""
         |> fun s -> File.WriteAllText(proj + ".args.txt", s)
 
 
-    let GeneralTestCase directory name code refs livechecks dyncompile =
+    let GeneralTestCase directory name code refs livechecks dyntypes =
         Directory.CreateDirectory directory |> ignore
         Environment.CurrentDirectory <- directory
         File.WriteAllText (name + ".fs", """
@@ -182,19 +182,19 @@ module TestCode
             [| yield "dummy.exe"; 
                yield "--once"; 
                if livechecks then yield "--livecheck"; 
-               if dyncompile then yield "--dyncompile"; 
+               if dyntypes then yield "--dyntypes"; 
                yield "@" + name + ".args.txt" |]
         let res = FSharp.Compiler.PortaCode.ProcessCommandLine.ProcessCommandLine(args)
         Assert.AreEqual(0, res)
 
-    let internal SimpleTestCase livecheck dyncompile name code = 
+    let internal SimpleTestCase livecheck dyntypes name code = 
         let directory = __SOURCE_DIRECTORY__ + "/data"
-        GeneralTestCase directory name code "" livecheck dyncompile
+        GeneralTestCase directory name code "" livecheck dyntypes
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTuples (fullinterp: bool) =
-    SimpleTestCase false fullinterp "TestTuples" """
+let TestTuples (dyntypes: bool) =
+    SimpleTestCase false dyntypes "TestTuples" """
 module Tuples = 
     let x1 = (1, 2)
     let x2 = match x1 with (a,b) -> 1 + 2
@@ -202,8 +202,8 @@ module Tuples =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let SmokeTestLiveCheck (fullinterp: bool) =
-    SimpleTestCase true fullinterp "SmokeTestLiveCheck" """
+let SmokeTestLiveCheck (dyntypes: bool) =
+    SimpleTestCase true dyntypes "SmokeTestLiveCheck" """
 module SmokeTestLiveCheck = 
     type LiveCheckAttribute() = 
         inherit System.Attribute()
@@ -244,8 +244,8 @@ module SmokeTestLiveCheck =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let PlusOperator (fullinterp: bool) =
-    SimpleTestCase false fullinterp "PlusOperator" """
+let PlusOperator (dyntypes: bool) =
+    SimpleTestCase false dyntypes "PlusOperator" """
 module PlusOperator = 
     let x1 = 1 + 1
     let x5 = 1.0 + 2.0
@@ -263,9 +263,25 @@ module PlusOperator =
         """
 
 [<TestCase(true)>]
+//[<TestCase(false)>] // this only works with dyntypes
+let ImplementClassOverride(dyntypes: bool) =
+    SimpleTestCase false dyntypes "SetMapCount" """
+
+type UserType() =
+    override x.ToString() = "a"
+let f () = 
+    let u = UserType()
+    let s = u.ToString()
+    if s <> "a" then failwithf "unexpected, got '%s', expected 'a'" s 
+
+f()
+"""
+
+
+[<TestCase(true)>]
 [<TestCase(false)>]
-let SetMapCount(fullinterp: bool) =
-    SimpleTestCase false fullinterp "SetMapCount" """
+let SetMapCount(dyntypes: bool) =
+    SimpleTestCase false dyntypes "SetMapCount" """
 
 type UserType = A of int | B
 let f () = 
@@ -283,8 +299,8 @@ f()
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let MinusOperator (fullinterp: bool) =
-        SimpleTestCase false fullinterp "MinusOperator" """
+let MinusOperator (dyntypes: bool) =
+        SimpleTestCase false dyntypes "MinusOperator" """
 module MinusOperator = 
     let x1 = 1 - 1
     let x5 = 1.0 - 2.0
@@ -302,8 +318,8 @@ module MinusOperator =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let Options (fullinterp: bool) =
-        SimpleTestCase false fullinterp "Options" """
+let Options (dyntypes: bool) =
+        SimpleTestCase false dyntypes "Options" """
 module Options = 
     let x2 = None : int option 
     let x3 = Some 3 : int option 
@@ -315,8 +331,8 @@ module Options =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let Exceptions (fullinterp: bool) =
-        SimpleTestCase false fullinterp "Exceptions" """
+let Exceptions (dyntypes: bool) =
+        SimpleTestCase false dyntypes "Exceptions" """
 module Exceptions = 
     let x2 = try invalidArg "a" "wtf" with :? System.ArgumentException -> () 
     let x4 = try failwith "hello" with e -> () 
@@ -326,15 +342,15 @@ module Exceptions =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestEvalIsNone (fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestEvalIsNone" """
+let TestEvalIsNone (dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestEvalIsNone" """
 let x3 = (Some 3).IsNone
         """
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestEvalUnionCaseInGenericCode (fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestEvalUnionCaseInGenericCofe" """
+let TestEvalUnionCaseInGenericCode (dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestEvalUnionCaseInGenericCofe" """
 let f<'T>(x:'T) = Some x
 
 let y = f 3
@@ -342,8 +358,8 @@ printfn "y = %A, y.GetType() = %A" y (y.GetType())
         """
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestEvalNewOnClass(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestEvalNewOnClass" """
+let TestEvalNewOnClass(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestEvalNewOnClass" """
 type C(x: int) = 
     member __.X = x
 
@@ -353,8 +369,8 @@ let z = if y.X <> 3 then failwith "fail!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestExtrinsicFSharpExtensionOnClass1(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestExtrinsicFSharpExtensionOnClass1" """
+let TestExtrinsicFSharpExtensionOnClass1(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass1" """
 type System.String with 
     member x.GetLength() = x.Length
 
@@ -364,8 +380,8 @@ let z = if y <> 1 then failwith "fail!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestExtrinsicFSharpExtensionOnClass2(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestExtrinsicFSharpExtensionOnClass2" """
+let TestExtrinsicFSharpExtensionOnClass2(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass2" """
 type System.String with 
     member x.GetLength2(y:int) = x.Length + y
 
@@ -375,8 +391,8 @@ let z = if y <> 7 then failwith "fail!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestExtrinsicFSharpExtensionOnClass3(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestExtrinsicFSharpExtensionOnClass3" """
+let TestExtrinsicFSharpExtensionOnClass3(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass3" """
 type System.String with 
     static member GetLength3(x:string) = x.Length
 
@@ -386,8 +402,8 @@ let z = if y <> 3 then failwith "fail!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestExtrinsicFSharpExtensionOnClass4(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestExtrinsicFSharpExtensionOnClass4" """
+let TestExtrinsicFSharpExtensionOnClass4(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass4" """
 type System.String with 
     member x.LengthProp = x.Length
 
@@ -397,8 +413,8 @@ let z = if y <> 4 then failwith "fail!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTopMutables(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestTopFunctionIsNotValue" """
+let TestTopMutables(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
 let mutable x = 0
 if x <> 0 then failwith "failure A!" else 1
 let y(c:int) = 
@@ -413,8 +429,8 @@ if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTopFunctionIsNotValue(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestTopFunctionIsNotValue" """
+let TestTopFunctionIsNotValue(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
 let mutable x = 0
 if x <> 0 then failwith "failure A!" else 1
 let y(c:int) = 
@@ -429,16 +445,16 @@ if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTopUnitValue(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestTopUnitValue" """
+let TestTopUnitValue(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestTopUnitValue" """
 let mutable x = 0
 if x <> 0 then failwith "fail!" 
         """
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestEvalSetterOnClass(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestEvalSetterOnClass" """
+let TestEvalSetterOnClass(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestEvalSetterOnClass" """
 type C(x: int) = 
     let mutable y = x
     member __.Y with get() = y and set v = y <- v
@@ -453,15 +469,15 @@ if c.Y <> 4 then failwith "fail! fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestLengthOnList(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestLengthOnList" """
+let TestLengthOnList(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestLengthOnList" """
 let x = [1;2;3].Length
 if x <> 3 then failwith "fail! fail!" 
         """
 // Known limitation of FSharp Compiler Service
 //[<Test>]
 //    let TestEvalLocalFunctionOnClass() =
-//        SimpleTestCase false fullinterp "TestEvalLocalFunctionOnClass" """
+//        SimpleTestCase false dyntypes "TestEvalLocalFunctionOnClass" """
 //type C(x: int) = 
 //    let f x = x + 1
 //    member __.Y with get() = f x
@@ -472,16 +488,16 @@ if x <> 3 then failwith "fail! fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestEquals(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestEquals" """
+let TestEquals(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestEquals" """
 let x = (1 = 2)
         """
 
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTypeTest(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestTypeTest" """
+let TestTypeTest(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestTypeTest" """
 let x = match box 1 with :? int as a -> a | _ -> failwith "fail!"
 if x <> 1 then failwith "fail fail!" 
         """
@@ -489,8 +505,8 @@ if x <> 1 then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestTypeTest2(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestTypeTest2" """
+let TestTypeTest2(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestTypeTest2" """
 let x = match box 2 with :? string as a -> failwith "fail!" | _ -> 1
 if x <> 1 then failwith "fail fail!" 
         """
@@ -498,7 +514,7 @@ if x <> 1 then failwith "fail fail!"
 // Known limitation of FSharp Compiler Service
 //[<Test>]
 //    let GenericThing() =
-//        SimpleTestCase false fullinterp "GenericThing" """
+//        SimpleTestCase false dyntypes "GenericThing" """
 //let f () = 
 //    let g x = x
 //    g 3, g 4, g
@@ -510,8 +526,8 @@ if x <> 1 then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let DateTime(fullinterp: bool) =
-        SimpleTestCase false fullinterp "DateTime" """
+let DateTime(dyntypes: bool) =
+        SimpleTestCase false dyntypes "DateTime" """
 let v1 = System.DateTime.Now
 let v2 = v1.Date
 let mutable v3 = System.DateTime.Now
@@ -520,8 +536,8 @@ let v4 = v3.Date
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let LocalMutation(fullinterp: bool) =
-        SimpleTestCase false fullinterp "LocalMutation" """
+let LocalMutation(dyntypes: bool) =
+        SimpleTestCase false dyntypes "LocalMutation" """
 let f () = 
     let mutable x = 1
     x <- x + 1
@@ -533,8 +549,8 @@ if f() <> 3 then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let SimpleInheritFromObj(fullinterp: bool) =
-        SimpleTestCase false fullinterp "SimpleInheritFromObj" """
+let SimpleInheritFromObj(dyntypes: bool) =
+        SimpleTestCase false dyntypes "SimpleInheritFromObj" """
 type C() =
     inherit obj()
     member val x = 1 with get, set
@@ -547,8 +563,8 @@ if c.x <> 3 then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let SimpleInheritFroConcreteClass(fullinterp: bool) =
-        SimpleTestCase false fullinterp "SimpleInheritFromObj" """
+let SimpleInheritFroConcreteClass(dyntypes: bool) =
+        SimpleTestCase false dyntypes "SimpleInheritFromObj" """
 type C() =
     inherit System.Text.ASCIIEncoding()
     member val x = 1 with get, set
@@ -558,10 +574,10 @@ if c.CodePage  <> System.Text.ASCIIEncoding().CodePage then failwith "nope"
 
         """
 
-(* THis fails
-[<Test>]
-let SimpleInterfaceImpl() =
-        SimpleTestCase false fullinterp "SimpleInterfaceImpl" """
+[<TestCase(true)>]
+//[<TestCase(false)>]  this fails without dynamic types
+let SimpleInterfaceImpl(dyntypes) =
+        SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System
 type C() =
     interface IComparable with
@@ -572,9 +588,10 @@ if (c :> IComparable).CompareTo(c) <> 1 then failwith "fail fail!"
         """
 
 
-[<Test>]
-let SimpleInterfaceImplPassedAsArg() =
-        SimpleTestCase false fullinterp "SimpleInterfaceImpl" """
+[<TestCase(true)>]
+//[<TestCase(false)>]  this fails without dynamic types
+let SimpleInterfaceImplPassedAsArg(dyntypes) =
+        SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System.Collections
 open System.Collections.Generic
 type C() =
@@ -593,13 +610,11 @@ type C() =
 let c = new C() |> Seq.map id |> Seq.toArray
 if c.Length <> 0 then failwith "fail fail!" 
         """
-*)
-
-
+ 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let LetRecSmoke(fullinterp: bool) =
-        SimpleTestCase false fullinterp "LetRecSmoke" """
+let LetRecSmoke(dyntypes: bool) =
+        SimpleTestCase false dyntypes "LetRecSmoke" """
 let even a = 
     let rec even x = (if x = 0 then true else odd (x-1))
     and odd x = (if x = 0 then false else even (x-1))
@@ -612,7 +627,7 @@ if not (even 10) then failwith "fail fail!"
 (*
 [<Test>]
     let TraitCallSmoke() =
-        SimpleTestCase false fullinterp "TraitCallSmoke" """
+        SimpleTestCase false dyntypes "TraitCallSmoke" """
 let even a = 
     let rec even x = (if x = 0 then true else odd (x-1))
     and odd x = (if x = 0 then false else even (x-1))
@@ -626,8 +641,8 @@ if not (even 10) then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TryGetValueSmoke(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TryGetValueSmoke" """
+let TryGetValueSmoke(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TryGetValueSmoke" """
 let m = dict  [ (1,"2") ]
 let f() = 
     match m.TryGetValue 1 with
@@ -639,8 +654,8 @@ f()
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let TestCallUnitFunction(fullinterp: bool) =
-        SimpleTestCase false fullinterp "TestCallUnitFunction" """
+let TestCallUnitFunction(dyntypes: bool) =
+        SimpleTestCase false dyntypes "TestCallUnitFunction" """
 let theRef = FSharp.Core.LanguagePrimitives.GenericZeroDynamic<int>()
        """
 

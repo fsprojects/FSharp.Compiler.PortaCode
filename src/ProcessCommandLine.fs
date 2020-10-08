@@ -22,7 +22,7 @@ let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
     let mutable dump = false
     let mutable livecheck = false
-    let mutable dyncompile = false
+    let mutable dyntypes = false
     let mutable watch = true
     let mutable useEditFiles = false
     let mutable writeinfo = true
@@ -51,8 +51,8 @@ let ProcessCommandLine (argv: string[]) =
                     livecheck <- true
                     writeinfo <- true
                     useEditFiles <- true
-                elif arg = "--dyncompile" then 
-                    dyncompile <- true
+                elif arg = "--dyntypes" then 
+                    dyntypes <- true
                 elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
@@ -82,7 +82,7 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
                    printfn "                     Also write an info file based on results of evaluation."
                    printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"
-                   printfn "   --dyncompile      Dynamically compile and load so full .NET types exist"
+                   printfn "   --dyntypes      Dynamically compile and load so full .NET types exist"
                    printfn "   <other-args>      All other args are assumed to be extra F# command line arguments, e.g. --define:FOO"
                    exit 1
                 else yield arg  |]
@@ -426,7 +426,7 @@ let ProcessCommandLine (argv: string[]) =
 
         assemblyNameId <- assemblyNameId + 1
         let assemblyName = AssemblyName("Eval" + string assemblyNameId)
-        let ctxt = EvalContext(assemblyName, dyncompile, assemblyResolver, ?sink=sink)
+        let ctxt = EvalContext(assemblyName, dyntypes, assemblyResolver, ?sink=sink)
         let fileConvContents = [| for i in fileContents -> convFile i |]
 
         for (_, contents) in fileConvContents do 
@@ -482,7 +482,7 @@ let ProcessCommandLine (argv: string[]) =
 
             if not dump && webhook.IsNone then 
                 //let dynAssembly =
-                //    if dyncompile then 
+                //    if dyntypes then 
                 //        produceDynamicAssembly parseTrees
                 //    else 
                 //        None
