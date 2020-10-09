@@ -43,16 +43,23 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.EndsWith(".fsproj") then 
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
-                elif arg.StartsWith "--msbuildarg:" then msbuildArgs <- msbuildArgs @ [ arg.["----msbuildarg:".Length ..]] 
+                elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["----projarg:".Length ..]] 
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
                 elif arg = "--livecheck" then 
+                    dyntypes <- true
                     livecheck <- true
                     writeinfo <- true
                     useEditFiles <- true
+                elif arg = "--enablelivechecks" then 
+                    livecheck <- true
+                elif arg = "--useeditfles" then 
+                    useEditFiles <- true
                 elif arg = "--dyntypes" then 
                     dyntypes <- true
+                elif arg = "--writeinfo" then 
+                    writeinfo <- true
                 elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
@@ -76,7 +83,7 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "   --once            Don't enter watch mode (default: watch the source files of the project for changes)"
                    printfn "   --send:<url>      Send the JSON-encoded contents of the PortaCode to the webhook"
                    printfn "   --send            Equivalent to --send:%s" defaultUrl
-                   printfn "   --msbuildarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
+                   printfn "   --projarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
                    printfn "   --dump            Dump the contents to console after each update"
                    printfn "   --livecheck       Only evaluate those with a LiveCheck attribute"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
@@ -249,53 +256,78 @@ let ProcessCommandLine (argv: string[]) =
     let clearInfoFile sourceFile = 
         emitInfoFile sourceFile [| |]
 
+    let LISTLIM = 20
+
+    let (|ConsNil|_|) (v: obj) =
+        let ty = v.GetType()
+        if Reflection.FSharpType.IsUnion(ty) then
+            let uc, vs = Reflection.FSharpValue.GetUnionFields(v, ty)
+            if uc.DeclaringType.IsGenericType && uc.DeclaringType.GetGenericTypeDefinition() = typedefof<list<int>> then
+                 match vs with 
+                 | [| a; b |] -> Some (Some(a,b))
+                 | [|  |] -> Some (None)
+                 | _ -> None
+            else None
+        else None
+
+    let rec (|List|_|) n (v: obj) =
+        if n > LISTLIM then Some []
+        else
+        match v with 
+        | ConsNil (Some (a,List ((+) 1 n) b)) -> Some (a::b)
+        | ConsNil None -> Some []
+        | _ -> None
+
     /// Format values resulting from live checking using the interpreter
     let rec formatValue (value: obj) = 
         match value with 
-        | null -> "<null>"
+        | null -> "null/None"
         | :? string as s -> sprintf "%A" s
         | value -> 
         let ty = value.GetType()
-        if ty.Name = "Tensor" || ty.Name = "Shape" then 
+        match value with 
+        | _ when ty.Name = "Tensor" || ty.Name = "Shape" ->
             // TODO: this is a hack for DiffSharp, consider how to generalize it
             value.ToString()
-        elif Reflection.FSharpType.IsTuple(ty) then 
+        | _ when Reflection.FSharpType.IsTuple(ty) ->
             let vs = Reflection.FSharpValue.GetTupleFields(value)
             "(" + String.concat "," (Array.map formatValue vs) + ")"
-        elif Reflection.FSharpType.IsFunction(ty) then 
+        | _ when Reflection.FSharpType.IsFunction(ty)  ->
             "<func>"
-        elif ty.IsArray then 
+        | _ when ty.IsArray ->
             let value = (value :?> Array)
             if ty.GetArrayRank() = 1 then 
                 "[| " + 
                     String.concat "; " 
-                       [ for i in 0 .. min 10 (value.GetLength(0) - 1) -> 
+                       [ for i in 0 .. min LISTLIM (value.GetLength(0) - 1) -> 
                             formatValue (value.GetValue(i)) ] 
-                 + (if value.GetLength(0) > 5 then "; ..." else "")
+                 + (if value.GetLength(0) > LISTLIM then "; ..." else "")
                  + " |]"
             elif ty.GetArrayRank() = 2 then 
                 "[| " + 
                     String.concat ";   \n " 
-                       [ for i in 0 .. min 5 (value.GetLength(0) - 1) -> 
+                       [ for i in 0 .. min (LISTLIM/2) (value.GetLength(0) - 1) -> 
                             String.concat ";" 
-                               [ for j in 0 .. min 5 (value.GetLength(1) - 1) -> 
+                               [ for j in 0 .. min (LISTLIM/2) (value.GetLength(1) - 1) -> 
                                    formatValue (value.GetValue(i, j)) ] 
-                            + (if value.GetLength(1) > 5 then "; ..." else "")
+                            + (if value.GetLength(1) > (LISTLIM/2) then "; ..." else "")
                        ]
-                  + (if value.GetLength(0) > 5 then "\n   ...\n" else "\n")
+                  + (if value.GetLength(0) > (LISTLIM/2) then "\n   ...\n" else "\n")
                   + " |]"
             else
                 sprintf "array rank %d" value.Rank 
-        elif Reflection.FSharpType.IsRecord(ty) then 
+        | _ when Reflection.FSharpType.IsRecord(ty) ->
             let fs = Reflection.FSharpType.GetRecordFields(ty)
             let vs = Reflection.FSharpValue.GetRecordFields(value)
             "{ " + String.concat "; " [| for (f,v) in Array.zip fs vs -> f.Name + "=" + formatValue v |] + " }"
-        elif Reflection.FSharpType.IsUnion(ty) then 
+        | List 0 els ->
+            "[" + String.concat "; " [| for v in els -> formatValue v |] + (if els.Length >= LISTLIM then "; .." else "") + "]"
+        | _ when Reflection.FSharpType.IsUnion(ty) ->
             let uc, vs = Reflection.FSharpValue.GetUnionFields(value, ty)
             uc.Name + "(" + String.concat ", " [| for v in vs -> formatValue v |] + ")"
-        elif value :? System.Collections.IEnumerable then 
+        | _ when (value :? System.Collections.IEnumerable) ->
             "<seq>"
-        else 
+        | _ ->
             value.ToString() //"unknown value"
 
     let MAXTOOLTIP = 100
@@ -382,7 +414,7 @@ let ProcessCommandLine (argv: string[]) =
         let sink =
             if writeinfo then 
                 { new Sink with 
-                     member __.CallAndReturn(mref, mdef, _typeArgs, args, res) = 
+                     member __.CallAndReturn(mref, callerRange, mdef, _typeArgs, args, res) = 
                          let paramNames = 
                             match mdef with 
                              | Choice1Of2 minfo -> [| for p in minfo.GetParameters() -> p.Name |]
@@ -406,7 +438,7 @@ let ProcessCommandLine (argv: string[]) =
                          match mref with 
                          | None -> ()
                          | Some mref-> 
-                             mref.Range |> Option.iter (fun r -> 
+                             callerRange |> Option.iter (fun r -> 
                                  tooltips.Add(r, lines, true))
 
                      member __.BindValue(vdef, value) = 

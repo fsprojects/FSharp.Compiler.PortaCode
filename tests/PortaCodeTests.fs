@@ -265,7 +265,7 @@ module PlusOperator =
 [<TestCase(true)>]
 //[<TestCase(false)>] // this only works with dyntypes
 let ImplementClassOverride(dyntypes: bool) =
-    SimpleTestCase false dyntypes "SetMapCount" """
+    SimpleTestCase false dyntypes "ImplementClassOverride" """
 
 type UserType() =
     override x.ToString() = "a"
@@ -278,12 +278,27 @@ f()
 """
 
 
+//[<TestCase(true)>]
+////[<TestCase(false)>] // this only works with dyntypes
+//let ImplementClassOverrideInGenericClass(dyntypes: bool) =
+//    SimpleTestCase false dyntypes "ImplementClassOverrideInGenericClass" """
+
+//type UserType<'T>(x:'T) =
+//    override _.ToString() : string = unbox x
+//let f () = 
+//    let u : UserType<string> = UserType<string>("a")
+//    let s = u.ToString()
+//    if s <> "a" then failwithf "unexpected, got '%s', expected 'a'" s 
+
+//f()
+//"""
+
+
 [<TestCase(true)>]
 [<TestCase(false)>]
 let SetMapCount(dyntypes: bool) =
     SimpleTestCase false dyntypes "SetMapCount" """
 
-type UserType = A of int | B
 let f () = 
     let l = [ 1; 2; 3 ]
     let s = Set.ofList [ 1; 2; 3 ]
@@ -291,6 +306,17 @@ let f () =
     if l.Length <> 3 then failwith "unexpected"
     if s.Count <> 3 then failwith "unexpected"
     if m.Count <> 1 then failwith "unexpected"
+
+f()
+"""
+
+[<TestCase(true)>]
+[<TestCase(false)>]
+let ArrayOfUserDefinedUnionType(dyntypes: bool) =
+    SimpleTestCase false dyntypes "ArrayOfUserDefinedUnionType" """
+
+type UserType = A of int | B
+let f () = 
     let a = [| UserType.A 1 |]
     if a.Length <> 1 then failwith "unexpected"
 
@@ -299,8 +325,34 @@ f()
 
 [<TestCase(true)>]
 [<TestCase(false)>]
+let ArrayOfUserDefinedRecordType(dyntypes: bool) =
+    SimpleTestCase false dyntypes "ArrayOfUserDefinedUnionRecordType" """
+
+type UserType = { X: int; Y: string }
+let f () = 
+    let a = [| { X = 1; Y = "a" } |]
+    if a.Length <> 1 then failwith "unexpected"
+
+f()
+"""
+
+[<TestCase(true)>]
+[<TestCase(false)>]
+let SetOfUserDefinedUnionType(dyntypes: bool) =
+    SimpleTestCase false dyntypes "SetOfUserDefinedUnionType" """
+
+type UserType = A of int | B
+let f () = 
+    let a = set [| UserType.A 1 |]
+    if a.Count <> 1 then failwith "unexpected"
+
+f()
+"""
+
+[<TestCase(true)>]
+[<TestCase(false)>]
 let MinusOperator (dyntypes: bool) =
-        SimpleTestCase false dyntypes "MinusOperator" """
+    SimpleTestCase false dyntypes "MinusOperator" """
 module MinusOperator = 
     let x1 = 1 - 1
     let x5 = 1.0 - 2.0
@@ -319,7 +371,7 @@ module MinusOperator =
 [<TestCase(true)>]
 [<TestCase(false)>]
 let Options (dyntypes: bool) =
-        SimpleTestCase false dyntypes "Options" """
+    SimpleTestCase false dyntypes "Options" """
 module Options = 
     let x2 = None : int option 
     let x3 = Some 3 : int option 
@@ -332,7 +384,7 @@ module Options =
 [<TestCase(true)>]
 [<TestCase(false)>]
 let Exceptions (dyntypes: bool) =
-        SimpleTestCase false dyntypes "Exceptions" """
+    SimpleTestCase false dyntypes "Exceptions" """
 module Exceptions = 
     let x2 = try invalidArg "a" "wtf" with :? System.ArgumentException -> () 
     let x4 = try failwith "hello" with e -> () 
@@ -343,14 +395,14 @@ module Exceptions =
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestEvalIsNone (dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestEvalIsNone" """
+    SimpleTestCase false dyntypes "TestEvalIsNone" """
 let x3 = (Some 3).IsNone
         """
 
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestEvalUnionCaseInGenericCode (dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestEvalUnionCaseInGenericCofe" """
+    SimpleTestCase false dyntypes "TestEvalUnionCaseInGenericCofe" """
 let f<'T>(x:'T) = Some x
 
 let y = f 3
@@ -359,7 +411,7 @@ printfn "y = %A, y.GetType() = %A" y (y.GetType())
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestEvalNewOnClass(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestEvalNewOnClass" """
+    SimpleTestCase false dyntypes "TestEvalNewOnClass" """
 type C(x: int) = 
     member __.X = x
 
@@ -370,7 +422,7 @@ let z = if y.X <> 3 then failwith "fail!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestExtrinsicFSharpExtensionOnClass1(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass1" """
+    SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass1" """
 type System.String with 
     member x.GetLength() = x.Length
 
@@ -381,7 +433,7 @@ let z = if y <> 1 then failwith "fail!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestExtrinsicFSharpExtensionOnClass2(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass2" """
+    SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass2" """
 type System.String with 
     member x.GetLength2(y:int) = x.Length + y
 
@@ -392,7 +444,7 @@ let z = if y <> 7 then failwith "fail!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestExtrinsicFSharpExtensionOnClass3(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass3" """
+    SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass3" """
 type System.String with 
     static member GetLength3(x:string) = x.Length
 
@@ -403,7 +455,7 @@ let z = if y <> 3 then failwith "fail!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestExtrinsicFSharpExtensionOnClass4(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass4" """
+    SimpleTestCase false dyntypes "TestExtrinsicFSharpExtensionOnClass4" """
 type System.String with 
     member x.LengthProp = x.Length
 
@@ -414,7 +466,7 @@ let z = if y <> 4 then failwith "fail!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestTopMutables(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
+    SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
 let mutable x = 0
 if x <> 0 then failwith "failure A!" else 1
 let y(c:int) = 
@@ -430,7 +482,7 @@ if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestTopFunctionIsNotValue(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
+    SimpleTestCase false dyntypes "TestTopFunctionIsNotValue" """
 let mutable x = 0
 if x <> 0 then failwith "failure A!" else 1
 let y(c:int) = 
@@ -446,7 +498,7 @@ if z1 <> 1 || z2 <> 2 then failwith "failure D!" else 1
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestTopUnitValue(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestTopUnitValue" """
+    SimpleTestCase false dyntypes "TestTopUnitValue" """
 let mutable x = 0
 if x <> 0 then failwith "fail!" 
         """
@@ -454,7 +506,7 @@ if x <> 0 then failwith "fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestEvalSetterOnClass(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestEvalSetterOnClass" """
+    SimpleTestCase false dyntypes "TestEvalSetterOnClass" """
 type C(x: int) = 
     let mutable y = x
     member __.Y with get() = y and set v = y <- v
@@ -470,14 +522,14 @@ if c.Y <> 4 then failwith "fail! fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestLengthOnList(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestLengthOnList" """
+    SimpleTestCase false dyntypes "TestLengthOnList" """
 let x = [1;2;3].Length
 if x <> 3 then failwith "fail! fail!" 
         """
 // Known limitation of FSharp Compiler Service
 //[<Test>]
 //    let TestEvalLocalFunctionOnClass() =
-//        SimpleTestCase false dyntypes "TestEvalLocalFunctionOnClass" """
+//    SimpleTestCase false dyntypes "TestEvalLocalFunctionOnClass" """
 //type C(x: int) = 
 //    let f x = x + 1
 //    member __.Y with get() = f x
@@ -489,7 +541,7 @@ if x <> 3 then failwith "fail! fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestEquals(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestEquals" """
+    SimpleTestCase false dyntypes "TestEquals" """
 let x = (1 = 2)
         """
 
@@ -497,7 +549,7 @@ let x = (1 = 2)
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestTypeTest(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestTypeTest" """
+    SimpleTestCase false dyntypes "TestTypeTest" """
 let x = match box 1 with :? int as a -> a | _ -> failwith "fail!"
 if x <> 1 then failwith "fail fail!" 
         """
@@ -506,7 +558,7 @@ if x <> 1 then failwith "fail fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestTypeTest2(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestTypeTest2" """
+    SimpleTestCase false dyntypes "TestTypeTest2" """
 let x = match box 2 with :? string as a -> failwith "fail!" | _ -> 1
 if x <> 1 then failwith "fail fail!" 
         """
@@ -514,7 +566,7 @@ if x <> 1 then failwith "fail fail!"
 // Known limitation of FSharp Compiler Service
 //[<Test>]
 //    let GenericThing() =
-//        SimpleTestCase false dyntypes "GenericThing" """
+//    SimpleTestCase false dyntypes "GenericThing" """
 //let f () = 
 //    let g x = x
 //    g 3, g 4, g
@@ -527,7 +579,7 @@ if x <> 1 then failwith "fail fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let DateTime(dyntypes: bool) =
-        SimpleTestCase false dyntypes "DateTime" """
+    SimpleTestCase false dyntypes "DateTime" """
 let v1 = System.DateTime.Now
 let v2 = v1.Date
 let mutable v3 = System.DateTime.Now
@@ -537,7 +589,7 @@ let v4 = v3.Date
 [<TestCase(true)>]
 [<TestCase(false)>]
 let LocalMutation(dyntypes: bool) =
-        SimpleTestCase false dyntypes "LocalMutation" """
+    SimpleTestCase false dyntypes "LocalMutation" """
 let f () = 
     let mutable x = 1
     x <- x + 1
@@ -550,7 +602,7 @@ if f() <> 3 then failwith "fail fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let SimpleInheritFromObj(dyntypes: bool) =
-        SimpleTestCase false dyntypes "SimpleInheritFromObj" """
+    SimpleTestCase false dyntypes "SimpleInheritFromObj" """
 type C() =
     inherit obj()
     member val x = 1 with get, set
@@ -563,8 +615,8 @@ if c.x <> 3 then failwith "fail fail!"
 
 [<TestCase(true)>]
 [<TestCase(false)>]
-let SimpleInheritFroConcreteClass(dyntypes: bool) =
-        SimpleTestCase false dyntypes "SimpleInheritFromObj" """
+let SimpleInheritFromConcreteClass(dyntypes: bool) =
+    SimpleTestCase false dyntypes "SimpleInheritFromObj" """
 type C() =
     inherit System.Text.ASCIIEncoding()
     member val x = 1 with get, set
@@ -577,21 +629,134 @@ if c.CodePage  <> System.Text.ASCIIEncoding().CodePage then failwith "nope"
 [<TestCase(true)>]
 //[<TestCase(false)>]  this fails without dynamic types
 let SimpleInterfaceImpl(dyntypes) =
-        SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+    SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System
 type C() =
     interface IComparable with
-       member x.CompareTo(y:obj) = 2
+       member x.CompareTo(y:obj) = 17
 
 let c = C()
-if (c :> IComparable).CompareTo(c) <> 1 then failwith "fail fail!" 
+let v = (c :> IComparable).CompareTo(c)
+if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
         """
 
 
 [<TestCase(true)>]
 //[<TestCase(false)>]  this fails without dynamic types
-let SimpleInterfaceImplPassedAsArg(dyntypes) =
-        SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+let SimpleInterfaceImpl2(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+open System.Collections
+open System.Collections.Generic
+type C() =
+    interface IEnumerator with
+       member x.MoveNext() = false
+       member x.Current = box 1
+       member x.Reset() = ()
+
+let c = C() :> IEnumerator
+if c.MoveNext() <> false then failwith "fail fail!" 
+        """
+ 
+[<TestCase(true, Ignore="fails due to strange reflection emit problem for interface impls in generic classes"); >]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleInterfaceImplGenericClass(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+open System.Collections
+open System.Collections.Generic
+type C<'T>() =
+    interface IEnumerator with
+       member x.MoveNext() = false
+       member x.Current = box 1
+       member x.Reset() = ()
+
+let c = C<int>() :> IEnumerator
+if c.MoveNext() <> false then failwith "fail fail!" 
+        """
+ 
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleGenericInterfaceImpl(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+open System.Collections
+open System.Collections.Generic
+type C() =
+    interface IEnumerator<int> with
+       member x.Current = 17
+       member x.Dispose() = ()
+    interface IEnumerator with
+       member x.MoveNext() = false
+       member x.Current = box 10
+       member x.Reset() = ()
+
+let c = new C() :> IEnumerator<int>
+if c.Current <> 17 then failwith "fail fail!" 
+if c.Reset() <> () then failwith "fail fail 2!" 
+if c.MoveNext() <> false then failwith "fail fail!" 
+        """
+ 
+[<TestCase(true, Ignore= "ignore because union types don't get dynamic emit types yet, codegen is too complicated and FCS doesn't tell us how") >]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let UnionTypeWithOverride(dyntypes) =
+    SimpleTestCase false dyntypes "UnionTypeWithOverride" """
+
+type UnionType =
+   | A
+   | B
+   override x.ToString() = "dd"
+
+if A.ToString() <> "dd" then failwith "fail fail! 1" 
+        """
+
+[<TestCase(true) >]
+[<TestCase(false)>]
+let SimpleClass(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C(x: int, y: int) =
+    member _.X = x
+    member _.Y = y
+    member _.XY = x + y
+
+let c = C(3,4)
+if c.X <> 3 then failwith "fail fail! 1" 
+if c.Y <> 4 then failwith "fail fail! 2" 
+if c.XY <> 7 then failwith "fail fail! 3" 
+        """
+
+[<TestCase(true) >]
+[<TestCase(false)>]
+let SimpleClassWithInnerFunctions(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C(x: int, y: int) =
+    let f x = x + 1
+    member _.FX = f x
+
+let c = C(3,4)
+if c.FX <> 4 then failwith "fail fail! 4" 
+        """
+
+[<TestCase(true) >]
+[<TestCase(false)>]
+let SimpleStruct(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleStruct" """
+
+[<Struct>]
+type C(x: int, y: int) =
+    member _.X = x
+    member _.Y = y
+    member _.XY = x + y
+
+let c = C(3,4)
+if c.X <> 3 then failwith "fail fail! 1" 
+if c.Y <> 4 then failwith "fail fail! 2" 
+if c.XY <> 7 then failwith "fail fail! 3" 
+        """
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleGenericInterfaceImplPassedAsArg(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleGenericInterfaceImplPassedAsArg" """
 open System.Collections
 open System.Collections.Generic
 type C() =
@@ -614,7 +779,7 @@ if c.Length <> 0 then failwith "fail fail!"
 [<TestCase(true)>]
 [<TestCase(false)>]
 let LetRecSmoke(dyntypes: bool) =
-        SimpleTestCase false dyntypes "LetRecSmoke" """
+    SimpleTestCase false dyntypes "LetRecSmoke" """
 let even a = 
     let rec even x = (if x = 0 then true else odd (x-1))
     and odd x = (if x = 0 then false else even (x-1))
@@ -624,25 +789,25 @@ if even 11 then failwith "fail!"
 if not (even 10) then failwith "fail fail!" 
         """
 
-(*
-[<Test>]
-    let TraitCallSmoke() =
-        SimpleTestCase false dyntypes "TraitCallSmoke" """
-let even a = 
-    let rec even x = (if x = 0 then true else odd (x-1))
-    and odd x = (if x = 0 then false else even (x-1))
-    even a
+[<TestCase(true)>]
+[<TestCase(false)>]
+let FastIntegerForLoop(dyntypes: bool) =
+    SimpleTestCase false dyntypes "FastIntegerForLoop" """
 
-if even 11 then failwith "fail!" 
-if not (even 10) then failwith "fail fail!" 
+let f () = 
+    let mutable res = 0
+    for i in 0 .. 10 do
+       res <- res + i
+    res
+
+if f() <> List.sum [ 0 .. 10 ] then failwith "fail!" 
         """
-*)
 
 
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TryGetValueSmoke(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TryGetValueSmoke" """
+    SimpleTestCase false dyntypes "TryGetValueSmoke" """
 let m = dict  [ (1,"2") ]
 let f() = 
     match m.TryGetValue 1 with
@@ -655,7 +820,7 @@ f()
 [<TestCase(true)>]
 [<TestCase(false)>]
 let TestCallUnitFunction(dyntypes: bool) =
-        SimpleTestCase false dyntypes "TestCallUnitFunction" """
+    SimpleTestCase false dyntypes "TestCallUnitFunction" """
 let theRef = FSharp.Core.LanguagePrimitives.GenericZeroDynamic<int>()
        """
 

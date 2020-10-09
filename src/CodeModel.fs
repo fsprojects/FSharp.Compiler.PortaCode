@@ -26,7 +26,7 @@ type DExpr =
     | DecisionTree   of DExpr * (DLocalDef[] * DExpr)[]
     | DecisionTreeSuccess of int * DExpr[]
     | Call of DExpr option * DMemberRef * DType[] * DType[] * DExpr[] * DRange option
-    | NewObject of DMemberRef * DType[] * DExpr[] 
+    | NewObject of DMemberRef * DType[] * DExpr[] * DRange option
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
     | NewRecord of DType * DExpr[] 
@@ -45,7 +45,7 @@ type DExpr =
     | NewArray of DType * DExpr[]  
     | TypeTest of DType * DExpr  
     | AddressSet of DExpr * DExpr  
-    | ValueSet of Choice<DLocalRef, DMemberRef> * DExpr  
+    | ValueSet of Choice<DLocalRef, DMemberRef> * DExpr * DRange option
     | Unused
     | DefaultValue of DType  
     | Const of obj * DType
@@ -84,11 +84,15 @@ and DFieldDef =
       IsCompilerGenerated: bool 
     }
 
+and DSlotRef = 
+    { Member: DMemberRef
+      DeclaringType: DType
+    }
 and DMemberDef = 
     { EnclosingEntity: DEntityRef
       Name: string
       GenericParameters: DGenericParameterDef[]
-      IsOverride: bool
+      ImplementedSlots: DSlotRef[]
       IsInstance: bool
       IsValue: bool
       IsCompilerGenerated: bool
@@ -97,40 +101,45 @@ and DMemberDef =
       Range: DRange option }
 
     member x.Ref = 
-        { Key =
-            { Entity=x.EnclosingEntity
-              Name= x.Name
-              GenericArity = x.GenericParameters.Length 
-              ArgTypes = (x.Parameters |> Array.map (fun p -> p.LocalType)) 
-              ReturnType = x.ReturnType 
-            }
-          Range = x.Range }
+        { Entity=x.EnclosingEntity
+          Name= x.Name
+          GenericArity = x.GenericParameters.Length 
+          ArgTypes = (x.Parameters |> Array.map (fun p -> p.LocalType)) 
+          ReturnType = x.ReturnType }
 
 and DGenericParameterDef = 
     { Name: string }
 
 and DEntityDef = 
     { QualifiedName: string
-      NameX: string
+      Name: string
       GenericParameters: DGenericParameterDef[]
       BaseType: DType option
       DeclaredInterfaces: DType[]
       DeclaredFields: DFieldDef[]
+      IsUnion: bool
+      IsRecord: bool
+      IsStruct: bool
+      IsInterface: bool
+      CustomAttributes: DCustomAttributeDef[]
+      //IsAbstractClass: bool
       UnionCases: string[]
       Range: DRange option }
+    member x.Ref = DEntityRef x.QualifiedName
+
+and DCustomAttributeDef =
+    { AttributeType: DEntityRef
+      ConstructorArguments: (DType * obj)[]
+      NamedArguments: (DType * string * bool * obj)[] }
 
 and DEntityRef = DEntityRef of string 
 
-and DMemberRefKey = 
+and DMemberRef = 
     { Entity: DEntityRef 
       Name: string
       GenericArity: int 
       ArgTypes: DType[] 
       ReturnType: DType  }
-
-and DMemberRef = 
-    { Key: DMemberRefKey
-      Range: DRange option }
 
 and DLocalRef = 
     { Name: string
@@ -144,6 +153,7 @@ and DUnionCaseRef = DUnionCaseRef of string
 
 and DObjectExprOverrideDef =  
     { Name: string
+      Slot: DSlotRef
       GenericParameters: DGenericParameterDef[]
       Parameters: DLocalDef[]
       Body: DExpr }

@@ -1,19 +1,37 @@
 # FSharp.Compiler.PortaCode
-The PortaCode F# code format and corresponding interpreter. 
 
-* Used by Fabulous and others.
+An F# code format and corresponding interpreter. 
 
 * Currently distributed by source inclusion or 'fslive' tool, no nuget package yet
 
-* FsLive.Cli is a live programming "watch my project" command line tool which is experimental, e.g. 
+* `dotnet fslive` is a live programming "watch my project" command line tool, e.g. 
 
-       FsLive.Cli\bin\Debug\netcoreapp3.1\fslive.exe foo.fsx
-       
-* Wet paint, API will change
+       dotnet fslive foo.fsx
+       dotnet fslive MyProject.fsproj
 
-It's used for the "LiveUpdate" feature of Fabulous, to interpret the Elmish model/view/update application code on-device.
+* Used by Fabulous, DiffSharp and others.
 
-The interpreter may also be useful for other live checking tools, because you get escape the whole complication of actual IL generation, Reflection emit and reflection invoke, and no actual classes etc are generated. We can also adapt the interpreter over time to do things like report extra information back to the host.
+The overall aim of the interpreter is to execute F# code in "unusual" ways, e.g. 
+
+* **Live checking** - Only executing selective slices of code (e.g. `LiveCheck` checks, see below)
+
+* **Observed execution** - Watch execution by collecting information about the values flowing through different variables,
+  for use in hover tips.
+
+* **Symbolic execution** - This is done in cooperation with the target libraries
+  which must allow injection of symbols into the computational structure, e.g. the injection of
+  symbolic shape variables into the shapes of tensors, and the collection and processing of
+  associated constraints on those variables.
+
+* **Execution without Reflection.Emit** - Some platforms don't support Reflection.Emit.  However
+  be aware that execution on such platforms with this intepreter is approximate with many F# language
+  features not supported correctly.
+
+The interpreter is used for the "LiveUpdate" feature of Fabulous, to interpret the Elmish model/view/update application code on-device.
+
+The interpreter may also be useful for other live checking tools, because you get
+escape the whole complication of actual IL generation, Reflection emit and reflection invoke,
+and no actual classes etc are generated.
 
 ### Code format
 
@@ -39,7 +57,7 @@ Arguments:
    --once            Don't enter watch mode (default: watch the source files of the project for changes)
    --send:<url>      Send the JSON-encoded contents of the PortaCode to the webhook
    --send            Equivalent to --send:http://localhost:9867/update
-   --msbuildarg:arg  An MSBuild argument e.g. /p:Configuration=Release
+   --projarg:arg     An MSBuild argument e.g. /p:Configuration=Release
    --dump            Dump the contents to console after each update
    --livecheck       Only evaluate those with a LiveCheck attribute. This uses on-demand execution semantics for top-level declarations
                      Also write an info file based on results of evaluation, and watch for .fsharp/foo.fsx.edit files and use the 
@@ -51,10 +69,16 @@ Arguments:
 
 * A LiveCheck is a declaration like this: https://github.com/fsprojects/TensorFlow.FSharp/blob/master/examples/NeuralStyleTransfer-dsl.fsx#L109 …
 
-* The attribute indicates the intent that that specific piece of code (and anything it depends on) should be run at development time. This is _not_ done by the IDE directly but by some other tool you have to start.
+* The attribute indicates the intent that that specific piece of code (and anything it
+  depends on) should be run at development time.
 
-* An example tool is the "fslive.exe" tool from this repo here https://github.com/fsprojects/FSharp.Compiler.PortaCode/blob/master/src/ProcessCommandLine.fs#L46.  Like FsAutoComplete this watches for project changes and then recompiles using FCS and looks for LiveCheck attributes.  It then interprets those evaluations using reflection and collects information about the execution.  For example, it detects errors and detects when variables have been bound to particular values during interpretation.  The tool currently emits a ".fsharp/file.fsx.info" file containing extra information about the file "file.fsx" - extra error messages and extra tooltips.  An experimenta  FCS modification notices the existence of this file and incorporates the added information into Intellisense results. This keeps the checker tool totally decoupled from the IDE tooling.  
+* An example tool is the "fslive.exe" tool from this repo here https://github.com/fsprojects/FSharp.Compiler.PortaCode/blob/master/src/ProcessCommandLine.fs#L46.
+  Like FsAutoComplete this watches for project changes and then recompiles using FCS and looks for LiveCheck attributes.  It then interprets those evaluations
+  using reflection and collects information about the execution.  For example, it detects errors and detects when variables have been bound to particular values
+  during interpretation.  The tool currently emits a ".fsharp/file.fsx.info" file containing extra information about the file "file.fsx" - extra error messages
+  and extra tooltips.  An experimenta  FCS modification notices the existence of this file and incorporates the added information into Intellisense results. This
+  keeps the checker tool totally decoupled from the IDE tooling.  
 
-* This functionality may be reconfigured to be an [F# Analyzer](https://medium.com/lambda-factory/introducing-f-analyzers-772487889429).  
+* This functionality may one day be reconfigured to be an [F# Analyzer](https://medium.com/lambda-factory/introducing-f-analyzers-772487889429).  
  
 
