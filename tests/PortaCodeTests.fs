@@ -235,7 +235,13 @@ module SmokeTestLiveCheck =
 
         // 'v' has been incremented - because `x1` is now evaluated!
         if v <> 2 then failwithf "no way Julie, v = %d" v
-        if y2 <> 5 then failwithf "no way Jose, x2 = %d, v = %d" x2 v
+        if y2 <> 5 then failwithf "no way Jose, y2 = %d, v = %d" y2 v
+
+        let y3 = x1 + 1
+
+        // 'v' is not incremented again - because `x1` is already evaluated!
+        if v <> 2 then failwithf "no way Julie, v = %d" v
+        if y3 <> 5 then failwithf "no way Jose, y3 = %d, v = %d" y3 v
 
         5 
 
@@ -308,6 +314,35 @@ let f () =
     if m.Count <> 1 then failwith "unexpected"
 
 f()
+"""
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore="needs dyntypes")>]
+let CustomAttributeSmokeTest(dyntypes: bool) =
+    SimpleTestCase false dyntypes "CustomAttributeSmokeTest" """
+
+open System
+[<Obsolete>]
+type UserType() = member x.P = 1
+
+let attrs = typeof<UserType>.GetCustomAttributes(typeof<ObsoleteAttribute>, true)
+if attrs.Length <> 1 then failwith "unexpected"
+
+"""
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore="needs dyntypes")>]
+let CustomAttributeWithArgs(dyntypes: bool) =
+    SimpleTestCase false dyntypes "CustomAttributeWithArgs" """
+
+open System
+[<Obsolete("abc")>]
+type UserType() = member x.P = 1
+
+let attrs = typeof<UserType>.GetCustomAttributes(typeof<ObsoleteAttribute>, true)
+if attrs.Length <> 1 then failwith "unexpected"
+if (attrs.[0] :?> ObsoleteAttribute).Message <> "abc" then failwith "unexpected"
+
 """
 
 [<TestCase(true)>]

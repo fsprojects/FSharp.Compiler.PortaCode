@@ -365,8 +365,8 @@ let ProcessCommandLine (argv: string[]) =
                         let valuesText = 
                             [ for (action, value) in lines do 
                                   let action = (if action = "" then "" else action + " ")
-                                  let valueText = formatValue value
-                                  let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", " ")
+                                  let valueText = try formatValue value with e -> sprintf "??? (%s)" e.Message
+                                  let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", "")
                                   let valueText = 
                                       if valueText.Length > MAXTOOLTIP then 
                                           valueText.[0 .. MAXTOOLTIP-1] + "..."

@@ -239,6 +239,7 @@ type Convert(includeRanges: bool) =
         assert (memb.IsMember || memb.IsModuleValueOrMember)
         { EnclosingEntity = convEntityRef memb.DeclaringEntity.Value
           ImplementedSlots = memb.ImplementedAbstractSignatures |> Seq.toArray |> Array.map convSlot
+          CustomAttributes = memb.Attributes |> Seq.toArray |> Array.map convCustomAttribute 
           Name = memb.CompiledName
           GenericParameters = convGenericParamDefs memb.GenericParameters
           Parameters = convParamDefs memb

@@ -755,6 +755,23 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             let env = (envEmpty, entityDef.GenericParameters, typB.GenericTypeParameters) |||> Array.fold2 (fun env p a -> bindType env p a)
             typB, env
 
+        let buildCustomAttribute (attr: DCustomAttributeDef) =
+            let ctorRef = 
+                { Entity=attr.AttributeType
+                  Name=".ctor"
+                  GenericArity=0
+                  ArgTypes= Array.map fst attr.ConstructorArguments
+                  ReturnType= DType.DNamedType(attr.AttributeType, [| |]) }
+            match resolveMethod ctorRef with
+            | RMethod (:? ConstructorInfo as ctor) -> 
+                let args = Array.map snd attr.ConstructorArguments
+                let cb = CustomAttributeBuilder(ctor, args)
+                cb
+            | _ -> failwith "unexpected: couldn't resolve ctor"
+
+        let buildCustomAttributes (attrs: DCustomAttributeDef[]) f =
+            Array.iter (buildCustomAttribute >> f) attrs
+
         printfn "defining base type and define the interfaces..."
         /// Set the base type and define the interfaces
         let rec phase2(decls: DDecl[]) = 
@@ -772,9 +789,11 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         let (RTypeErased env t) = resolveType (env, i) 
                         typB.AddInterfaceImplementation(t)
 
+                    buildCustomAttributes entityDef.CustomAttributes typB.SetCustomAttribute 
                     phase2(subDecls)
                 | _ -> ()
         phase2(decls)
+
 
         printfn "defining define the virtual methods and fields..."
 
@@ -817,8 +836,10 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         // don't have an expression compiler - we could interpret these)
                         let attrs = MethodAttributes.Public 
                         let cB = typB.DefineConstructor(attrs, CallingConventions.Standard,paramTypesT)
+                        for (i, pn) in Array.indexed membDef.Parameters do  
+                            cB.DefineParameter(i+1, ParameterAttributes.None, pn.Name) |> ignore
                         shellTypeConstructorBuilders.[membRef] <- (cB, paramTypesT)
-                    elif membDef.ImplementedSlots.Length > 0 then
+                    else
 
                         let cconv = CallingConventions.HasThis
                         let isIntfSlot = 
@@ -826,6 +847,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 let (RTypeErased env slotDeclType) = resolveType (env, slot.DeclaringType)
                                 slotDeclType.IsInterface
                             )
+                        let isVirtualSlot = membDef.ImplementedSlots.Length > 0 && not isIntfSlot
 
                         let attrs = 
                             if isIntfSlot then 
@@ -834,11 +856,17 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 ||| MethodAttributes.HideBySig
                                 ||| MethodAttributes.NewSlot
                                 ||| MethodAttributes.Final
-                            else
+                            elif isVirtualSlot then
                                 MethodAttributes.Public
                                 ||| MethodAttributes.Virtual
                                 ||| MethodAttributes.HideBySig
+                            else
+                                MethodAttributes.Public
+                                ||| MethodAttributes.HideBySig
+
                         let mB = typB.DefineMethod(membDef.Name, attrs, cconv, returnTypeT, paramTypesT)
+                        for (i, pn) in Array.indexed membDef.Parameters do  
+                            mB.DefineParameter(i+1, ParameterAttributes.None, pn.Name) |> ignore
 
                         // Define the generic parameters on the method
                         if membDef.GenericParameters.Length > 0 then 
@@ -955,7 +983,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
                         ilg.Emit(OpCodes.Ret)
 
-                    elif membDef.ImplementedSlots.Length > 0 then
+                        buildCustomAttributes membDef.CustomAttributes mB.SetCustomAttribute 
+
+                    else
                         let mB, paramTypesT, returnTypeT = shellTypeMethodBuilders.[membRef]
                         let gpTys = Array.append (typB.GetGenericArguments()) (mB.GetGenericArguments())
                         let ilg = mB.GetILGenerator()
@@ -976,6 +1006,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 printfn "\nslot.Name = %s, mB = %A, slotV = %A, returnTypeT = %A\n\n" slot.Member.Name mB slotV returnTypeT
                                 //printfn "\nslotV2 = %A, (slotV = slotV2) = %b\n\n" slotV2 (slotV = slotV2)
                                 typB.DefineMethodOverride(mB, slotV)
+
+                        buildCustomAttributes membDef.CustomAttributes mB.SetCustomAttribute 
 
                 | _ -> ()
         phase4(decls)
@@ -1011,7 +1043,15 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     let ty = resolveEntity(membDef.EnclosingEntity)
                     let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
                     let paramTypesR = resolveTypes(env, paramTypes) 
-                    let thunk = ctxt.EvalMethodLambda (envEmpty, (membDef.Name = ".ctor"), membDef.IsInstance, membDef.GenericParameters, membDef.Parameters, body)
+                    let body2 =
+                        if membDef.IsValueDef then
+                            // augment lazy init of values with a ValueSet saving their result
+                            let loc = { Name="tmp3245"; IsMutable=false; LocalType=DType.DVariableType "?"; Range=None; IsCompilerGenerated=true }
+                            let locRef = { Name="tmp3245"; IsMutable=false; IsThisValue=false; Range = None}
+                            DExpr.Let((loc, body), DExpr.Sequential(DExpr.ValueSet(Choice2Of2 membDef.Ref, DExpr.Value locRef, None), DExpr.Value locRef))
+                        else
+                            body
+                    let thunk = ctxt.EvalMethodLambda (envEmpty, (membDef.Name = ".ctor"), membDef.IsInstance, membDef.GenericParameters, membDef.Parameters, body2)
                     methodThunks.[(ty, membDef.Name, paramTypesR)] <- (membDef, Value thunk)
 
                 | _ -> ()
@@ -1035,9 +1075,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
     member ctxt.TryEvalExpr (env, expr, range) = 
         try 
-            protectEval false range (fun () -> ctxt.EvalExpr (env, expr)) |> Choice1Of2
+            protectEval false range (fun () -> ctxt.EvalExpr (env, expr)) |> Ok
         with exn -> 
-            exn |> Choice2Of2
+            exn |> Error
 
     /// Try to evaluate the declarations, collecting errors and optimisitically continuing
     /// as we go.  Optionally evaluate only the ones marked with the [<LiveCheck>] attribute,
@@ -1046,8 +1086,36 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let evalLiveChecksOnly = defaultArg evalLiveChecksOnly false
         [| for d in decls do
             match d with 
-            | DDeclEntity (_e, subDecls) -> 
-                yield! ctxt.TryEvalDecls(env, subDecls, evalLiveChecksOnly=evalLiveChecksOnly)
+            | DDeclEntity (e, subDecls) -> 
+                
+                // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
+                // the attribute type passing the target type as an attribute.
+                if evalLiveChecksOnly then
+                    let liveShape = 
+                        e.CustomAttributes |> Array.tryFind (fun a -> 
+                            let (DEntityRef r) = a.AttributeType 
+                            r.Contains(".LiveCheckAttribute,"))
+                    match liveShape with
+                    | None  -> ()
+                    | Some attr -> 
+                        let ty = resolveEntity attr.AttributeType
+                        let tgt = resolveEntity (e.Ref)
+                        match ty, tgt with 
+                        | REntity (attrType, _), REntity (targetType, _) -> 
+                            let res = 
+                                try 
+                                    let obj = Activator.CreateInstance(attrType)
+                                    let exns = 
+                                        attrType.InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, obj, [| box targetType |]) 
+                                        :?> exn[]
+                                    [| for err in exns -> (err, err.EvalLocationStack) |]
+                                with err -> 
+                                    [| (err, err.EvalLocationStack) |]
+                            yield! res
+
+                        | _ -> failwith "couldn't resolve target or attribute, is --dyntypes on?"
+
+                    yield! ctxt.TryEvalDecls(env, subDecls, evalLiveChecksOnly=evalLiveChecksOnly)
 
             | DDeclMember (membDef, body, isLiveCheck) -> 
                 if (membDef.IsValueDef && not evalLiveChecksOnly) || 
@@ -1055,19 +1123,19 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     let ty = resolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.TryEvalExpr (env, body, membDef.Range)
                     match res with 
-                    | Choice1Of2 res -> 
+                    | Ok res -> 
                         sink.BindValue(membDef, res)
                         methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
-                    | Choice2Of2 err -> 
+                    | Error err -> 
                         yield (err, err.EvalLocationStack) 
 
             | DDecl.InitAction (expr, range) -> 
                 if not evalLiveChecksOnly then 
                     let res = ctxt.TryEvalExpr (env, expr, range) 
                     match res with 
-                    | Choice1Of2 res -> 
+                    | Ok res -> 
                         ()
-                    | Choice2Of2 err -> 
+                    | Error err -> 
                         yield (err, err.EvalLocationStack) |]
 
     /// Evalaute all the declarations using regular F# semantics
@@ -1658,26 +1726,6 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             ctxt.EvalWhileLoop(env, guardExpr, bodyExpr)
         else 
             Value (box ())
-
-(*
-    member ctxt.EvalFastIntegerForLoop(env, startExpr, limitExpr, consumeExpr, isUp) =
-        let startV = ctxt.EvalExpr(env, startExpr) |> getVal |> unbox<int>
-        let limitV = ctxt.EvalExpr(env, limitExpr) |> getVal |> unbox<int>
-        // FCS TODO: the loop variable is not being specified by FCS!
-        failwith "intepreted integer for-loops NYI"
-       if isUp then 
-             for i = startV to limitV do 
-             ctxt.EvalExpr(env, limitExpr) |> getVal |> unbox<int>
-
-        else
-             for i = startV to limitV do 
-                 
-        if ctxt.EvalBool(env, guardExpr) then 
-            ctxt.EvalExpr (env, bodyExpr)  |> ignore
-            ctxt.EvalWhileLoop(env, guardExpr, bodyExpr)
-        else 
-            Value (box ())
-*)
 
     member ctxt.EvalUnionCaseTest(env, unionExpr, unionType, unionCase) =
         let unionCaseR = resolveUnionCase (env, unionType, unionCase)

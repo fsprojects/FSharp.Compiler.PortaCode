@@ -96,6 +96,7 @@ and DMemberDef =
       IsInstance: bool
       IsValue: bool
       IsCompilerGenerated: bool
+      CustomAttributes: DCustomAttributeDef[]
       Parameters: DLocalDef[]
       ReturnType: DType
       Range: DRange option }
