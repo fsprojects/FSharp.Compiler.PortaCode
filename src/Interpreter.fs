@@ -668,7 +668,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
     let rec instantiateType (typeArgs: Type[]) (ty: Type) = 
         if ty.IsGenericType then 
-            ty.MakeGenericType(Array.map (instantiateType typeArgs) (ty.GetGenericArguments()))
+            ty.GetGenericTypeDefinition().MakeGenericType(Array.map (instantiateType typeArgs) (ty.GetGenericArguments()))
         elif ty.IsArray then
             (instantiateType typeArgs (ty.GetElementType())).MakeArrayType(ty.GetArrayRank())
         elif ty.IsByRef then
