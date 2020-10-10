@@ -3,8 +3,8 @@ module FSharp.Compiler.PortaCode.FromCompilerService
 
 open FSharp.Compiler.PortaCode.CodeModel
 open System.Collections.Generic
-open Microsoft.FSharp.Compiler.SourceCodeServices
-open Microsoft.FSharp.Compiler.Range
+open FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.Range
 
 let map2 f g (a,b) = (f a, g b)
 
@@ -28,7 +28,7 @@ type Convert(includeRanges: bool) =
         // FCS TODO: fix FCS quirk with IsNone and IsSome on the option type
         | BasicPatterns.Application( BasicPatterns.Call(Some obj, memberOrFunc, tyargs1, tyargs2, [ ]), typeArgs, [ arg ]) when memberOrFunc.CompiledName = "get_IsNone" || memberOrFunc.CompiledName = "get_IsSome"  -> 
             let objExprR = convExpr obj
-            let mrefR = convMemberRef memberOrFunc expr.Range
+            let mrefR = convMemberRef memberOrFunc
             let typeArgs1R = convTypes tyargs1
             let typeArgs2R = convTypes tyargs2
             let rangeR = convRange expr.Range
@@ -40,7 +40,7 @@ type Convert(includeRanges: bool) =
 
         | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
-            let mrefR = convMemberRef memberOrFunc expr.Range
+            let mrefR = convMemberRef memberOrFunc
             let typeArgs1R = convTypes typeArgs1
             let typeArgs2R = convTypes typeArgs2
             let argExprsR = convArgExprs memberOrFunc argExprs
@@ -86,7 +86,8 @@ type Convert(includeRanges: bool) =
             DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
         | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> 
-            DExpr.NewObject(convMemberRef objCtor  expr.Range, convTypes typeArgs, convArgExprs objCtor argExprs)
+            let rangeR = convRange expr.Range
+            DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs, rangeR)
 
         | BasicPatterns.NewRecord(recordType, argExprs) -> 
             DExpr.NewRecord(convType recordType, convExprs argExprs)
@@ -151,10 +152,11 @@ type Convert(includeRanges: bool) =
         | BasicPatterns.ValueSet(valToSet, valueExpr) -> 
             let valToSetR = 
                 if valToSet.IsModuleValueOrMember then 
-                    Choice2Of2 (convMemberRef valToSet expr.Range)
+                    Choice2Of2 (convMemberRef valToSet)
                 else
                     Choice1Of2 (convLocalRef expr.Range valToSet)
-            DExpr.ValueSet(valToSetR, convExpr valueExpr)
+            let rangeR = convRange expr.Range
+            DExpr.ValueSet(valToSetR, convExpr valueExpr, rangeR)
 
         | BasicPatterns.WhileLoop(guardExpr, bodyExpr) -> 
             DExpr.WhileLoop(convExpr guardExpr, convExpr bodyExpr)
@@ -182,20 +184,30 @@ type Convert(includeRanges: bool) =
     and convExprOpt exprs = 
         Option.map convExpr exprs
 
-    and convObjArg f objOpt = 
-        Option.map convExpr objOpt
+    and convSlot (memb: FSharpAbstractSignature) : DSlotRef = 
+       { Member =
+          { Entity = convEntityRef (stripTypeAbbreviations memb.DeclaringType).TypeDefinition
+            Name = memb.Name
+            GenericArity = memb.MethodGenericParameters.Count
+            ArgTypes = [| for a in Seq.concat memb.AbstractArguments -> convType a.Type |]
+            ReturnType = convType memb.AbstractReturnType }
+         DeclaringType = convType memb.DeclaringType
+       }
 
     and convObjMemberDef (memb: FSharpObjectExprOverride) : DObjectExprOverrideDef = 
-        { //Signature: DAbstractSignature
+        { Slot = convSlot memb.Signature
           GenericParameters = convGenericParamDefs memb.GenericParameters
           Name = memb.Signature.Name
           Parameters = memb.CurriedParameterGroups |> convParamDefs2
           Body = convExpr memb.Body }
 
     and convFieldRef (field: FSharpField) : DFieldRef = 
-        match field.DeclaringEntity.FSharpFields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
-        | Some index -> DFieldRef (index, field.Name)
-        | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
+        match field.DeclaringEntity with
+        | None -> failwithf "couldn't find declaring entity of field %s" field.Name
+        | Some e -> 
+            match e.FSharpFields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
+            | Some index -> DFieldRef (index, field.Name)
+            | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
 
     and convUnionCase (ucase: FSharpUnionCase) : DUnionCaseRef = 
         DUnionCaseRef (ucase.CompiledName)
@@ -213,7 +225,7 @@ type Convert(includeRanges: bool) =
     and convLocalDef (value: FSharpMemberOrFunctionOrValue) : DLocalDef = 
         { Name = value.CompiledName
           IsMutable = value.IsMutable
-          Type = convType value.FullType
+          LocalType = convType value.FullType
           Range = convRange value.DeclarationLocation
           IsCompilerGenerated=value.IsCompilerGenerated }
 
@@ -226,6 +238,7 @@ type Convert(includeRanges: bool) =
     and convMemberDef (memb: FSharpMemberOrFunctionOrValue) : DMemberDef = 
         assert (memb.IsMember || memb.IsModuleValueOrMember)
         { EnclosingEntity = convEntityRef memb.DeclaringEntity.Value
+          ImplementedSlots = memb.ImplementedAbstractSignatures |> Seq.toArray |> Array.map convSlot
           Name = memb.CompiledName
           GenericParameters = convGenericParamDefs memb.GenericParameters
           Parameters = convParamDefs memb
@@ -235,7 +248,7 @@ type Convert(includeRanges: bool) =
           Range = convRange memb.DeclarationLocation
           IsCompilerGenerated = memb.IsCompilerGenerated }
 
-    and convMemberRef (memb: FSharpMemberOrFunctionOrValue) range = 
+    and convMemberRef (memb: FSharpMemberOrFunctionOrValue) = 
         if not (memb.IsMember || memb.IsModuleValueOrMember) then failwith "can't convert non-member ref"
         let paramTypesR = convParamTypes memb
 
@@ -247,8 +260,7 @@ type Convert(includeRanges: bool) =
           Name= memb.CompiledName
           GenericArity = memb.GenericParameters.Count
           ArgTypes = paramTypesR 
-          ReturnType = convReturnType memb 
-          Range = convRange range }
+          ReturnType = convReturnType memb  }
 
     and convParamTypes (memb: FSharpMemberOrFunctionOrValue) =
         let parameters = memb.CurriedParameterGroups 
@@ -284,15 +296,15 @@ type Convert(includeRanges: bool) =
             | [| p |] when p.Type.HasTypeDefinition && p.Type.TypeDefinition.LogicalName = "unit" -> [| |]
             | ps -> ps
         let parametersR = 
-            parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.Type; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
+            parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; LocalType = convType p.Type; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
         if memb.IsInstanceMember && not memb.IsInstanceMemberInCompiledCode then 
             if memb.IsExtensionMember then 
                 let instanceTypeR = DNamedType (convEntityRef memb.ApparentEnclosingEntity, [| |])
-                let thisParam = { Name = "$this"; IsMutable = false; Type = instanceTypeR; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
+                let thisParam = { Name = "$this"; IsMutable = false; LocalType = instanceTypeR; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
                 Array.append [| thisParam |] parametersR
             else
                 let instanceType = memb.FullType.GenericArguments.[0]
-                let thisParam = { Name = "$this"; IsMutable = false; Type = convType instanceType; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
+                let thisParam = { Name = "$this"; IsMutable = false; LocalType = convType instanceType; Range = convRange memb.DeclarationLocation; IsCompilerGenerated=true }
                 Array.append [| thisParam |] parametersR
         else
             parametersR
@@ -303,18 +315,37 @@ type Convert(includeRanges: bool) =
             match parameters |> Seq.concat |> Seq.toArray with 
             | [| p |] when p.FullType.HasTypeDefinition && p.FullType.TypeDefinition.LogicalName = "unit" -> [| |]
             | ps -> ps
-        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; Type = convType p.FullType; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
+        parameters |> Array.map (fun p -> { Name = p.DisplayName; IsMutable = false; LocalType = convType p.FullType; Range = convRange p.DeclarationLocation; IsCompilerGenerated=false })
 
     and convReturnType (memb: FSharpMemberOrFunctionOrValue) = 
         convType memb.ReturnParameter.Type
 
+    and convCustomAttribute (cattr: FSharpAttribute) =
+        { AttributeType = convEntityRef cattr.AttributeType
+          ConstructorArguments = cattr.ConstructorArguments |> Seq.toArray |> Array.map (fun (ty, v) -> convType ty, v)
+          NamedArguments = cattr.NamedArguments |> Seq.toArray |> Array.map (fun (ty, v1, v2, v3) -> convType ty, v1, v2, v3)
+          }
     and convEntityDef (entity: FSharpEntity) : DEntityDef = 
         if entity.IsNamespace then failwith "convEntityDef: can't convert a namespace"
         if entity.IsArrayType then failwith "convEntityDef: can't convert an array"
         if entity.IsFSharpAbbreviation then failwith "convEntityDef: can't convert a type abbreviation"
-        { Name = entity.QualifiedName
+        { QualifiedName = entity.QualifiedName
+          Name = entity.CompiledName
+          BaseType = entity.BaseType |> Option.map convType
+          DeclaredInterfaces = entity.DeclaredInterfaces |> Seq.toArray |> Array.map convType
+          DeclaredFields = entity.FSharpFields |> Seq.toArray |> Array.map convField
           GenericParameters = convGenericParamDefs entity.GenericParameters 
           UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) 
+          IsUnion = entity.IsFSharpUnion
+          IsRecord = entity.IsFSharpRecord
+          IsStruct = entity.IsValueType
+          IsInterface = entity.IsInterface
+          CustomAttributes = entity.Attributes |> Seq.toArray |> Array.map convCustomAttribute 
+          // TODO: allow abstract classes
+          // TODO: allow classes with abstract slot definitions
+          // TODO: allow interfaces with abstract slot definitions
+          //AbstractSlots = [| for v in Seq.toArray entity.TryGetMembersFunctionsAndValues do v.  |]
+          //IsAbstractClass = entity.
           Range = convRange entity.DeclarationLocation}
 
     and convEntityRef (entity: FSharpEntity) : DEntityRef = 
@@ -322,6 +353,10 @@ type Convert(includeRanges: bool) =
         if entity.IsArrayType then failwith "convEntityRef: can't convert an array"
         if entity.IsFSharpAbbreviation then failwith "convEntityRef: can't convert a type abbreviation"
         DEntityRef entity.QualifiedName
+
+    and stripTypeAbbreviations (typ: FSharpType) : FSharpType = 
+        if typ.IsAbbreviation then stripTypeAbbreviations typ.AbbreviatedType 
+        else typ
 
     and convType (typ: FSharpType) = 
         if typ.IsAbbreviation then convType typ.AbbreviatedType 
@@ -334,6 +369,14 @@ type Convert(includeRanges: bool) =
         else DNamedType (convEntityRef typ.TypeDefinition, convTypes typ.GenericArguments)
     and convTypes (typs: seq<FSharpType>) = typs |> Seq.toArray |> Array.map convType 
     and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = { Name = gp.Name }
+    and convField (f: FSharpField) : DFieldDef = 
+        { Name = f.Name 
+          IsStatic = f.IsStatic
+          IsMutable = f.IsMutable
+          FieldType = convType f.FieldType
+          Range = convRange f.DeclarationLocation
+          IsCompilerGenerated = f.IsCompilerGenerated
+          }
     and convGenericParamDefs (gps: seq<FSharpGenericParameter>) = gps |> Seq.toArray |> Array.map convGenericParamDef
 
     let rec convDecl d = 
@@ -352,10 +395,10 @@ type Convert(includeRanges: bool) =
                if isLiveCheck then 
                    printfn "member %s is a LiveCheck!" v.LogicalName
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods
-               if not v.IsCompilerGenerated || not v.IsMember then
-                   let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
-                   let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
-                   yield DDeclMember (vR, eR, isLiveCheck)
+               //if v.IsValCompiledAsMethod || not v.IsMember then
+               let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
+               let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
+               yield DDeclMember (vR, eR, isLiveCheck)
 
            | FSharpImplementationFileDeclaration.InitAction(e) -> 
                yield DDecl.InitAction (convExpr e, convRange e.Range) |]
