@@ -305,7 +305,7 @@ let ProcessCommandLine (argv: string[]) =
                  + " |]"
             elif ty.GetArrayRank() = 2 then 
                 "[| " + 
-                    String.concat ";   \n " 
+                    String.concat ";   \n" 
                        [ for i in 0 .. min (LISTLIM/2) (value.GetLength(0) - 1) -> 
                             String.concat ";" 
                                [ for j in 0 .. min (LISTLIM/2) (value.GetLength(1) - 1) -> 
@@ -366,24 +366,24 @@ let ProcessCommandLine (argv: string[]) =
                             [ for (action, value) in lines do 
                                   let action = (if action = "" then "" else action + " ")
                                   let valueText = formatValue value
-                                  let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                                  let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", " ")
                                   let valueText = 
                                       if valueText.Length > MAXTOOLTIP then 
                                           valueText.[0 .. MAXTOOLTIP-1] + "..."
                                       else   
                                           valueText
                                   yield action + valueText ]
-                            |> String.concat "~   " // special new-line character known by experimental VS tooling + indent
+                            |> String.concat "\\n  " // special new-line character known by experimental VS tooling + indent
                     
-                        let sep = (if lines.Length = 1 then " " else "~   ")
+                        let sep = (if lines.Length = 1 then " " else "\\n")
                         let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
                         yield line
 
                for (exn:exn, rangeStack) in errors do 
                     if List.length rangeStack > 0 then 
                         let range = List.last rangeStack 
-                        let message = "LiveCheck failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
-                        printfn "%s" message
+                        printfn "%s" exn.Message
+                        let message = "LiveCheck failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","\\n") 
                         let line = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
                         yield line |]
 

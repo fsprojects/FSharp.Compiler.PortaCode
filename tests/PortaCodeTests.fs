@@ -263,7 +263,7 @@ module PlusOperator =
         """
 
 [<TestCase(true)>]
-//[<TestCase(false)>] // this only works with dyntypes
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let ImplementClassOverride(dyntypes: bool) =
     SimpleTestCase false dyntypes "ImplementClassOverride" """
 
@@ -279,7 +279,7 @@ f()
 
 
 //[<TestCase(true)>]
-////[<TestCase(false)>] // this only works with dyntypes
+//[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 //let ImplementClassOverrideInGenericClass(dyntypes: bool) =
 //    SimpleTestCase false dyntypes "ImplementClassOverrideInGenericClass" """
 
@@ -627,7 +627,7 @@ if c.CodePage  <> System.Text.ASCIIEncoding().CodePage then failwith "nope"
         """
 
 [<TestCase(true)>]
-//[<TestCase(false)>]  this fails without dynamic types
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleInterfaceImpl(dyntypes) =
     SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System
@@ -642,7 +642,7 @@ if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
 
 
 [<TestCase(true)>]
-//[<TestCase(false)>]  this fails without dynamic types
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleInterfaceImpl2(dyntypes) =
     SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System.Collections
@@ -718,6 +718,38 @@ type C(x: int, y: int) =
     member _.XY = x + y
 
 let c = C(3,4)
+if c.X <> 3 then failwith "fail fail! 1" 
+if c.Y <> 4 then failwith "fail fail! 2" 
+if c.XY <> 7 then failwith "fail fail! 3" 
+        """
+
+[<TestCase(true) >]
+//[<TestCase(false)>]
+let SimpleClassSelfConstructionNoArguments(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C() =
+    member _.X = 1
+    member _.Y = 2
+    new (x: int, y: int, z: int) = C()
+
+let c = C(3,4,5) // interpretation calls self constructor
+if c.X <> 1 then failwith "fail fail! 1" 
+if c.Y <> 2 then failwith "fail fail! 2" 
+        """
+
+[<TestCase(true) >]
+//[<TestCase(false)>]
+let SimpleClassSelfConstructionWithArguments(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C(x: int, y: int) =
+    member _.X = x
+    member _.Y = y
+    member _.XY = x + y
+    new (x: int, y: int, z: int) = C(x, y)
+
+let c = C(3,4,5) // interpretation calls self constructor
 if c.X <> 3 then failwith "fail fail! 1" 
 if c.Y <> 4 then failwith "fail fail! 2" 
 if c.XY <> 7 then failwith "fail fail! 3" 
