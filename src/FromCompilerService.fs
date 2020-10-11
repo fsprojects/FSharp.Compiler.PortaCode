@@ -233,12 +233,14 @@ type Convert(includeRanges: bool) =
         { Name = value.CompiledName
           IsThisValue = (value.IsMemberThisValue || value.IsConstructorThisValue || value.IsBaseValue)
           IsMutable = value.IsMutable
+          IsCompilerGenerated = value.IsCompilerGenerated
           Range = convRange range }
 
     and convMemberDef (memb: FSharpMemberOrFunctionOrValue) : DMemberDef = 
         assert (memb.IsMember || memb.IsModuleValueOrMember)
         { EnclosingEntity = convEntityRef memb.DeclaringEntity.Value
           ImplementedSlots = memb.ImplementedAbstractSignatures |> Seq.toArray |> Array.map convSlot
+          CustomAttributes = memb.Attributes |> Seq.toArray |> Array.map convCustomAttribute 
           Name = memb.CompiledName
           GenericParameters = convGenericParamDefs memb.GenericParameters
           Parameters = convParamDefs memb
@@ -324,6 +326,7 @@ type Convert(includeRanges: bool) =
         { AttributeType = convEntityRef cattr.AttributeType
           ConstructorArguments = cattr.ConstructorArguments |> Seq.toArray |> Array.map (fun (ty, v) -> convType ty, v)
           NamedArguments = cattr.NamedArguments |> Seq.toArray |> Array.map (fun (ty, v1, v2, v3) -> convType ty, v1, v2, v3)
+          //Range = cattr
           }
     and convEntityDef (entity: FSharpEntity) : DEntityDef = 
         if entity.IsNamespace then failwith "convEntityDef: can't convert a namespace"

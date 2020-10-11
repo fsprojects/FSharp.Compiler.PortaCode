@@ -9,10 +9,25 @@ type DRange =
      EndLine: int
      EndColumn: int }
    override range.ToString() = 
-       sprintf "(%d,%d)-(%d-%d)" range.StartLine range.StartColumn range.EndLine range.EndColumn
+       sprintf "%s: (%d,%d)-(%d-%d)" range.File range.StartLine range.StartColumn range.EndLine range.EndColumn
 
+type DDiagnostic =
+   { Severity: int
+     Number: int
+     Message: string
+     Stack: DRange list }
 
-
+   override diag.ToString() = 
+       let sev = match diag.Severity with 0 -> "info" | 1 -> "warning" | _ -> "error"
+       match List.rev diag.Stack with 
+       | [] -> 
+           sprintf "%s LC%d: %O" sev diag.Number diag.Message
+       | loc:: t -> 
+           [ sprintf "%O: %s LC%d: %O" loc sev diag.Number diag.Message
+             for loc in t do
+                 sprintf "    stack: %O" loc ]
+           |> String.concat "\n"
+             
 /// A representation of resolved F# expressions that can be serialized
 type DExpr = 
     | Value  of DLocalRef
@@ -96,6 +111,7 @@ and DMemberDef =
       IsInstance: bool
       IsValue: bool
       IsCompilerGenerated: bool
+      CustomAttributes: DCustomAttributeDef[]
       Parameters: DLocalDef[]
       ReturnType: DType
       Range: DRange option }
@@ -130,7 +146,9 @@ and DEntityDef =
 and DCustomAttributeDef =
     { AttributeType: DEntityRef
       ConstructorArguments: (DType * obj)[]
-      NamedArguments: (DType * string * bool * obj)[] }
+      NamedArguments: (DType * string * bool * obj)[]
+     // Range: DRange option 
+     }
 
 and DEntityRef = DEntityRef of string 
 
@@ -145,6 +163,7 @@ and DLocalRef =
     { Name: string
       IsThisValue: bool
       IsMutable: bool
+      IsCompilerGenerated: bool
       Range: DRange option }
 
 and DFieldRef = DFieldRef of int * string

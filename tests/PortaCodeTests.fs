@@ -235,7 +235,13 @@ module SmokeTestLiveCheck =
 
         // 'v' has been incremented - because `x1` is now evaluated!
         if v <> 2 then failwithf "no way Julie, v = %d" v
-        if y2 <> 5 then failwithf "no way Jose, x2 = %d, v = %d" x2 v
+        if y2 <> 5 then failwithf "no way Jose, y2 = %d, v = %d" y2 v
+
+        let y3 = x1 + 1
+
+        // 'v' is not incremented again - because `x1` is already evaluated!
+        if v <> 2 then failwithf "no way Julie, v = %d" v
+        if y3 <> 5 then failwithf "no way Jose, y3 = %d, v = %d" y3 v
 
         5 
 
@@ -263,7 +269,7 @@ module PlusOperator =
         """
 
 [<TestCase(true)>]
-//[<TestCase(false)>] // this only works with dyntypes
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let ImplementClassOverride(dyntypes: bool) =
     SimpleTestCase false dyntypes "ImplementClassOverride" """
 
@@ -279,7 +285,7 @@ f()
 
 
 //[<TestCase(true)>]
-////[<TestCase(false)>] // this only works with dyntypes
+//[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 //let ImplementClassOverrideInGenericClass(dyntypes: bool) =
 //    SimpleTestCase false dyntypes "ImplementClassOverrideInGenericClass" """
 
@@ -308,6 +314,35 @@ let f () =
     if m.Count <> 1 then failwith "unexpected"
 
 f()
+"""
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore="needs dyntypes")>]
+let CustomAttributeSmokeTest(dyntypes: bool) =
+    SimpleTestCase false dyntypes "CustomAttributeSmokeTest" """
+
+open System
+[<Obsolete>]
+type UserType() = member x.P = 1
+
+let attrs = typeof<UserType>.GetCustomAttributes(typeof<ObsoleteAttribute>, true)
+if attrs.Length <> 1 then failwith "unexpected"
+
+"""
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore="needs dyntypes")>]
+let CustomAttributeWithArgs(dyntypes: bool) =
+    SimpleTestCase false dyntypes "CustomAttributeWithArgs" """
+
+open System
+[<Obsolete("abc")>]
+type UserType() = member x.P = 1
+
+let attrs = typeof<UserType>.GetCustomAttributes(typeof<ObsoleteAttribute>, true)
+if attrs.Length <> 1 then failwith "unexpected"
+if (attrs.[0] :?> ObsoleteAttribute).Message <> "abc" then failwith "unexpected"
+
 """
 
 [<TestCase(true)>]
@@ -627,7 +662,7 @@ if c.CodePage  <> System.Text.ASCIIEncoding().CodePage then failwith "nope"
         """
 
 [<TestCase(true)>]
-//[<TestCase(false)>]  this fails without dynamic types
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleInterfaceImpl(dyntypes) =
     SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System
@@ -642,7 +677,7 @@ if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
 
 
 [<TestCase(true)>]
-//[<TestCase(false)>]  this fails without dynamic types
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleInterfaceImpl2(dyntypes) =
     SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System.Collections
@@ -718,6 +753,38 @@ type C(x: int, y: int) =
     member _.XY = x + y
 
 let c = C(3,4)
+if c.X <> 3 then failwith "fail fail! 1" 
+if c.Y <> 4 then failwith "fail fail! 2" 
+if c.XY <> 7 then failwith "fail fail! 3" 
+        """
+
+[<TestCase(true) >]
+//[<TestCase(false)>]
+let SimpleClassSelfConstructionNoArguments(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C() =
+    member _.X = 1
+    member _.Y = 2
+    new (x: int, y: int, z: int) = C()
+
+let c = C(3,4,5) // interpretation calls self constructor
+if c.X <> 1 then failwith "fail fail! 1" 
+if c.Y <> 2 then failwith "fail fail! 2" 
+        """
+
+[<TestCase(true) >]
+//[<TestCase(false)>]
+let SimpleClassSelfConstructionWithArguments(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+type C(x: int, y: int) =
+    member _.X = x
+    member _.Y = y
+    member _.XY = x + y
+    new (x: int, y: int, z: int) = C(x, y)
+
+let c = C(3,4,5) // interpretation calls self constructor
 if c.X <> 3 then failwith "fail fail! 1" 
 if c.Y <> 4 then failwith "fail fail! 2" 
 if c.XY <> 7 then failwith "fail fail! 3" 

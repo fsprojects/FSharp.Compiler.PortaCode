@@ -249,7 +249,7 @@ let ProcessCommandLine (argv: string[]) =
         if not (Directory.Exists infoDir) then
            Directory.CreateDirectory infoDir |> ignore
         try 
-            File.WriteAllLines(infoFile, lines)
+            File.WriteAllLines(infoFile, lines, encoding=Encoding.Unicode)
         finally
             try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
 
@@ -305,7 +305,7 @@ let ProcessCommandLine (argv: string[]) =
                  + " |]"
             elif ty.GetArrayRank() = 2 then 
                 "[| " + 
-                    String.concat ";   \n " 
+                    String.concat ";   \n" 
                        [ for i in 0 .. min (LISTLIM/2) (value.GetLength(0) - 1) -> 
                             String.concat ";" 
                                [ for j in 0 .. min (LISTLIM/2) (value.GetLength(1) - 1) -> 
@@ -334,7 +334,7 @@ let ProcessCommandLine (argv: string[]) =
     /// Write an info file containing extra information to make available to F# tooling.
     /// This is currently experimental and only experimental additions to F# tooling
     /// watch and consume this information.
-    let writeInfoFile (tooltips: (DRange * (string * obj) list * bool)[]) sourceFile errors = 
+    let writeInfoFile (tooltips: (DRange * (string * obj) list * bool)[]) sourceFile (diags: DDiagnostic[]) = 
 
         let lines = 
             let ranges =  HashSet<DRange>(HashIdentity.Structural)
@@ -365,26 +365,27 @@ let ProcessCommandLine (argv: string[]) =
                         let valuesText = 
                             [ for (action, value) in lines do 
                                   let action = (if action = "" then "" else action + " ")
-                                  let valueText = formatValue value
-                                  let valueText = valueText.Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                                  let valueText = try formatValue value with e -> sprintf "??? (%s)" e.Message
+                                  let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", "")
                                   let valueText = 
                                       if valueText.Length > MAXTOOLTIP then 
                                           valueText.[0 .. MAXTOOLTIP-1] + "..."
                                       else   
                                           valueText
                                   yield action + valueText ]
-                            |> String.concat "~   " // special new-line character known by experimental VS tooling + indent
+                            |> String.concat "\\n  " // special new-line character known by experimental VS tooling + indent
                     
-                        let sep = (if lines.Length = 1 then " " else "~   ")
+                        let sep = (if lines.Length = 1 then " " else "\\n")
                         let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
                         yield line
 
-               for (exn:exn, rangeStack) in errors do 
-                    if List.length rangeStack > 0 then 
-                        let range = List.last rangeStack 
-                        let message = "LiveCheck failed: " + exn.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","   ") 
-                        printfn "%s" message
-                        let line = sprintf "Error\t%d\t%d\t%d\t%d\terror\t%s\t304" range.StartLine range.StartColumn range.EndLine range.EndColumn message
+               for diag in diags do 
+                    printfn "%s" (diag.ToString())
+                    if List.length diag.Stack > 0 then 
+                        let range = List.last diag.Stack
+                        let message = "LiveCheck failed: " + diag.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","\\n") 
+                        let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
+                        let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
                         yield line |]
 
         emitInfoFile sourceFile lines
@@ -450,7 +451,8 @@ let ProcessCommandLine (argv: string[]) =
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
                      member __.UseLocal(vref, value) = 
-                         vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                         if not vref.IsCompilerGenerated then 
+                             vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
                 }
                 |> Some
             else  
@@ -466,17 +468,13 @@ let ProcessCommandLine (argv: string[]) =
 
         for (sourceFile, ds) in fileConvContents do 
             printfn "evaluating decls.... " 
-            let errors = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
+            let diags = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
 
             if writeinfo then 
-                writeInfoFile (tooltips.ToArray()) sourceFile errors
-            for (exn, locs) in errors do
-                if watch then
-                    printfn "fslive: exception: %A" (exn.ToString())
-                    for loc in locs do 
-                        printfn "   --> %O" loc
-                else
-                    raise exn
+                writeInfoFile (tooltips.ToArray()) sourceFile diags
+            for diag in diags do
+                printfn "%s" (diag.ToString())
+            if not watch && diags |> Array.exists (fun diag -> diag.Severity >= 2) then exit 1
 
             printfn "...evaluated decls" 
 
