@@ -183,7 +183,7 @@ let rec protectRaise (e: exn) =
 
 let protectInvoke f = 
     try f() 
-    with e -> protectRaise e
+    with exn -> protectRaise exn
 
 let EvalTraitCallInvoke (traitName, sourceTypeR: Type, isInstance, argExprsV: obj[]) =
     let objV = if isInstance then argExprsV.[0] else null
@@ -278,6 +278,13 @@ type System.Exception with
                 []
         and set (data : DRange list) = 
             e.Data.["location"] <- data
+
+let DiagnosticFromException (err: exn) =
+    let stack = err.EvalLocationStack
+    { Severity=2; 
+      Number = 1001
+      Message = err.Message
+      Stack = stack }
 
 /// If an exception happens, record the range in the exception
 let protectEval compgen (r: DRange option) f = 
@@ -764,8 +771,12 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                   ReturnType= DType.DNamedType(attr.AttributeType, [| |]) }
             match resolveMethod ctorRef with
             | RMethod (:? ConstructorInfo as ctor) -> 
-                let args = Array.map snd attr.ConstructorArguments
-                let cb = CustomAttributeBuilder(ctor, args)
+                let ctorArgs = Array.map snd attr.ConstructorArguments
+                let props = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetProperty(nm))
+                let propVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, _, _, v) -> v)
+                let flds = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetField(nm))
+                let fldVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, _, _, v) -> v)
+                let cb = CustomAttributeBuilder(ctor, ctorArgs, props, propVals, flds, fldVals)
                 cb
             | _ -> failwith "unexpected: couldn't resolve ctor"
 
@@ -1047,7 +1058,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         if membDef.IsValueDef then
                             // augment lazy init of values with a ValueSet saving their result
                             let loc = { Name="tmp3245"; IsMutable=false; LocalType=DType.DVariableType "?"; Range=None; IsCompilerGenerated=true }
-                            let locRef = { Name="tmp3245"; IsMutable=false; IsThisValue=false; Range = None}
+                            let locRef = { Name="tmp3245"; IsMutable=false; IsThisValue=false; IsCompilerGenerated=true; Range = None}
                             DExpr.Let((loc, body), DExpr.Sequential(DExpr.ValueSet(Choice2Of2 membDef.Ref, DExpr.Value locRef, None), DExpr.Value locRef))
                         else
                             body
@@ -1084,59 +1095,96 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
     /// in which case execution is done on-demand.
     member ctxt.TryEvalDecls(env, decls: DDecl[], ?evalLiveChecksOnly: bool) = 
         let evalLiveChecksOnly = defaultArg evalLiveChecksOnly false
-        [| for d in decls do
-            match d with 
-            | DDeclEntity (e, subDecls) -> 
+        let rec loop decls = 
+            [| for d in decls do
+                match d with 
+                | DDeclEntity (e, subDecls) -> 
                 
-                // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
-                // the attribute type passing the target type as an attribute.
-                if evalLiveChecksOnly then
-                    let liveShape = 
-                        e.CustomAttributes |> Array.tryFind (fun a -> 
-                            let (DEntityRef r) = a.AttributeType 
-                            r.Contains(".LiveCheckAttribute,"))
-                    match liveShape with
-                    | None  -> ()
-                    | Some attr -> 
-                        let ty = resolveEntity attr.AttributeType
+                    // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
+                    // the attribute type passing the target type as an attribute.
+                    //
+                    // When a live checking attribute is attached to a type
+                    // we expect the attribute type to implement an Invoke method
+                    // taking the target type and the location information related
+                    // to the check for diagnostic production.
+                    if evalLiveChecksOnly then
                         let tgt = resolveEntity (e.Ref)
-                        match ty, tgt with 
-                        | REntity (attrType, _), REntity (targetType, _) -> 
-                            let res = 
-                                try 
-                                    let obj = Activator.CreateInstance(attrType)
-                                    let exns = 
-                                        attrType.InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, obj, [| box targetType |]) 
-                                        :?> exn[]
-                                    [| for err in exns -> (err, err.EvalLocationStack) |]
-                                with err -> 
-                                    [| (err, err.EvalLocationStack) |]
-                            yield! res
+                        match tgt with 
+                        | REntity (targetType, _) -> 
+                            let liveShape = 
+                                targetType.GetCustomAttributes(true) |> Array.tryFind (fun a -> 
+                                    a.GetType().Name = "LiveCheckAttribute")
+                            match liveShape with
+                            | None  -> ()
+                            | Some attr -> 
+                                // Grab the source locations of the methods with LiveCheck attributes to pass to the checker for
+                                // better error location reporting
+                                let methLocs =
+                                    [| for  meth in decls do
+                                         match meth with 
+                                         | DDeclMember (membDef, body, isLiveCheck) -> 
+                                             printfn "checking meth %A" membDef.Name
+                                             let methParent = resolveEntity(membDef.EnclosingEntity)
+                                             match methParent with 
+                                             | REntity (targetType2, _) when targetType = targetType2 -> 
+                                                if membDef.CustomAttributes |> Array.exists (fun a -> 
+                                                       let (DEntityRef nm) = a.AttributeType 
+                                                       nm.Contains("LiveCheckAttribute")) then
+                                                   match membDef.Range with 
+                                                   | None -> ()
+                                                   | Some m -> 
+                                                       yield (membDef.Name, m.File, m.StartLine, m.StartColumn, m.EndLine, m.EndColumn)
+                                             | _ -> ()
+                                         | _ -> ()
+                                        
+                                        |]
+                                printfn "methLocs = %A" methLocs
+                                let res =
+                                    try 
+                                        protectEval false e.Range (fun () ->
+                                            let loc = defaultArg e.Range { File=""; StartLine=0; StartColumn=0; EndLine=0; EndColumn=0 }
+                                            let args = [| box targetType; box methLocs; box loc.File; box loc.StartLine; box loc.StartColumn; box loc.EndLine; box loc.EndColumn |]
+                                            let res = protectInvoke (fun () -> attr.GetType().InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, attr, args))
+                                            let diags = 
+                                                match res with 
+                                                | :? (((* severity *) int * (* number *) int * (* file *) string * int * int * int * int * (* message *) string)[]) as diags -> diags
+                                                | _ -> 
+                                                    failwith "incorrect return type from attribute Invoke"
+                                            [| for (severity, number, file, startLine, startCol, endLine, endCol, msg) in diags do
+                                                  let loc = { File=file; StartLine=startLine; StartColumn=startCol; EndLine=endLine; EndColumn=endCol }
+                                                  { Severity=severity
+                                                    Number = number
+                                                    Message = msg 
+                                                    Stack = Option.toList e.Range @ [loc] }  |])
+                                    with exn -> 
+                                        [| DiagnosticFromException exn |]
+                                yield! res
 
-                        | _ -> failwith "couldn't resolve target or attribute, is --dyntypes on?"
+                        | _ -> () //if failwith "couldn't target is --dyntypes on?"
 
-                    yield! ctxt.TryEvalDecls(env, subDecls, evalLiveChecksOnly=evalLiveChecksOnly)
+                        yield! loop subDecls
 
-            | DDeclMember (membDef, body, isLiveCheck) -> 
-                if (membDef.IsValueDef && not evalLiveChecksOnly) || 
-                   (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0)) then 
-                    let ty = resolveEntity(membDef.EnclosingEntity)
-                    let res = ctxt.TryEvalExpr (env, body, membDef.Range)
-                    match res with 
-                    | Ok res -> 
-                        sink.BindValue(membDef, res)
-                        methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
-                    | Error err -> 
-                        yield (err, err.EvalLocationStack) 
+                | DDeclMember (membDef, body, isLiveCheck) -> 
+                    if (membDef.IsValueDef && not evalLiveChecksOnly) || 
+                       (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0)) then 
+                        let ty = resolveEntity(membDef.EnclosingEntity)
+                        let res = ctxt.TryEvalExpr (env, body, membDef.Range)
+                        match res with 
+                        | Ok res -> 
+                            sink.BindValue(membDef, res)
+                            methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
+                        | Error err -> 
+                            yield DiagnosticFromException err 
 
-            | DDecl.InitAction (expr, range) -> 
-                if not evalLiveChecksOnly then 
-                    let res = ctxt.TryEvalExpr (env, expr, range) 
-                    match res with 
-                    | Ok res -> 
-                        ()
-                    | Error err -> 
-                        yield (err, err.EvalLocationStack) |]
+                | DDecl.InitAction (expr, range) -> 
+                    if not evalLiveChecksOnly then 
+                        let res = ctxt.TryEvalExpr (env, expr, range) 
+                        match res with 
+                        | Ok res -> 
+                            ()
+                        | Error err -> 
+                            yield DiagnosticFromException err |]
+        loop decls
 
     /// Evalaute all the declarations using regular F# semantics
     member ctxt.EvalDecls(env, decls: DDecl[]) = 
@@ -1518,8 +1566,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             for i in 0 .. parameters.Length - 1 do 
                 if parameters.[i].ParameterType.IsByRef then 
                     match argExprs.[i] with 
-                    | DExpr.AddressOf (DExpr.Value { Name = valToSet; IsThisValue = isThisValue; IsMutable = isMutable; Range = range }) when not isThisValue && isMutable ->
-                        match env.Vals.TryGetValue valToSet with 
+                    | DExpr.AddressOf (DExpr.Value vref) when not vref.IsThisValue && vref.IsMutable ->
+                        match env.Vals.TryGetValue vref.Name with 
                         | true, rv -> 
                             rv.Value <- argsV.[i]
                         | _ -> failwithf "didn't find mutable value in the environment at %A" range 
