@@ -361,6 +361,10 @@ type Convert(includeRanges: bool) =
         if typ.IsAbbreviation then stripTypeAbbreviations typ.AbbreviatedType 
         else typ
 
+    and isInterfaceType (typ: FSharpType) = 
+        if typ.IsAbbreviation then isInterfaceType typ.AbbreviatedType 
+        else typ.HasTypeDefinition && typ.TypeDefinition.IsInterface
+
     and convType (typ: FSharpType) = 
         if typ.IsAbbreviation then convType typ.AbbreviatedType 
         elif typ.IsFunctionType then DFunctionType (convType typ.GenericArguments.[0], convType typ.GenericArguments.[1])
@@ -370,8 +374,29 @@ type Convert(includeRanges: bool) =
         elif typ.TypeDefinition.IsArrayType then DArrayType (typ.TypeDefinition.ArrayRank, convType typ.GenericArguments.[0])
         elif typ.TypeDefinition.IsByRef then DByRefType (convType typ.GenericArguments.[0])
         else DNamedType (convEntityRef typ.TypeDefinition, convTypes typ.GenericArguments)
+
     and convTypes (typs: seq<FSharpType>) = typs |> Seq.toArray |> Array.map convType 
-    and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = { Name = gp.Name }
+
+    and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = 
+        { Name = gp.Name 
+          InterfaceConstraints = 
+             gp.Constraints 
+             |> Seq.toArray 
+             |> Array.choose (fun c -> 
+                  if c.IsCoercesToConstraint then 
+                      if isInterfaceType c.CoercesToTarget then Some (convType c.CoercesToTarget) else None 
+                  else None) 
+          BaseTypeConstraint = 
+              gp.Constraints 
+              |> Seq.tryPick (fun c -> 
+                  if c.IsCoercesToConstraint then
+                      if not (isInterfaceType c.CoercesToTarget) then Some (convType c.CoercesToTarget) 
+                      else None
+                  else None) 
+          DefaultConstructorConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsRequiresDefaultConstructorConstraint) 
+          ReferenceTypeConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsReferenceTypeConstraint) 
+          NotNullableValueTypeConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsNonNullableValueTypeConstraint) 
+          }
     and convField (f: FSharpField) : DFieldDef = 
         { Name = f.Name 
           IsStatic = f.IsStatic

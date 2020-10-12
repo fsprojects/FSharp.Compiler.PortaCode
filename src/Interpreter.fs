@@ -128,6 +128,9 @@ let bindAll = BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.In
 type Sink = 
 
     /// Called whenever a call is completed, showing caller reference and called method
+    abstract CheckEntityDecl: entity: DEntityDef * entityR: ResolvedEntity * memberDecls: (DMemberDef * DExpr)[] -> DDiagnostic[]
+
+    /// Called whenever a call is completed, showing caller reference and called method
     abstract CallAndReturn: caller: DMemberRef option * callerRange: DRange option * callee: Choice<MethodInfo, DMemberDef> * typeArgs: Type[] * args: obj[] * returnValue: Value -> unit
 
     /// Called whenever a value in a module is computed
@@ -141,6 +144,7 @@ type Sink =
 
 let emptySink = 
     { new Sink with 
+          member _.CheckEntityDecl(_,_,_) = [| |]
           member _.CallAndReturn(_,_,_,_,_,_) = ()
           member _.BindValue(_,_) = ()
           member _.BindLocal(_,_) = ()
@@ -732,8 +736,21 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let canEmitShellMethod (membDef: DMemberDef) =
             shellTypeEntityInfo.ContainsKey(membDef.EnclosingEntity)
 
-        printfn "defining types..."
-        let rec loop emit (decls, encTypB: TypeBuilder option) =
+        let defineGenericParamaterConstraints env (gpBs: Type[]) (gps: DGenericParameterDef[]) =
+            let gpBs = [| for p in gpBs -> p :?> GenericTypeParameterBuilder |]
+            for (gp, gpB) in Array.zip gps gpBs do
+                let attrs = 
+                    (if gp.NotNullableValueTypeConstraint then GenericParameterAttributes.NotNullableValueTypeConstraint else enum 0)
+                    ||| (if gp.ReferenceTypeConstraint then GenericParameterAttributes.ReferenceTypeConstraint else enum 0)
+                    ||| (if gp.DefaultConstructorConstraint then GenericParameterAttributes.DefaultConstructorConstraint else enum 0)
+                gpB.SetGenericParameterAttributes(attrs)
+                gpB.SetInterfaceConstraints [| for ty in gp.InterfaceConstraints -> let (RTypeErased env t) = resolveType (env, ty) in  t |]
+                match gp.BaseTypeConstraint with 
+                | None -> ()
+                | Some ty -> gpB.SetBaseTypeConstraint (let (RTypeErased env t) = resolveType (env, ty) in  t)
+
+        //printfn "defining types..."
+        let rec phase1 emit (decls, encTypB: TypeBuilder option) =
             for decl in decls do 
                 match decl with 
                 | DDeclEntity (entityDef, subDecls) ->
@@ -746,21 +763,33 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         shellTypeEntityInfo.[entityRef] <- entityDef
                         entityResolutions.[entityRef] <- REntity (typB, true)
                         if entityDef.GenericParameters.Length > 0 then
-                            for gpB in typB.DefineGenericParameters([| for p in entityDef.GenericParameters -> p.Name |]) do
-                                // TODO set constraints up correctly
-                                gpB.SetGenericParameterAttributes(GenericParameterAttributes.None)
-                                gpB.SetInterfaceConstraints [| |]
-                        loop emit (subDecls, Some typB)
+                            typB.DefineGenericParameters [| for gp in entityDef.GenericParameters -> gp.Name |] |> ignore
+
+                        phase1 emit (subDecls, Some typB)
                     else
                         entityResolutions.[entityDef.Ref] <- UEntity entityDef
-                        loop false (subDecls, None)
+                        phase1 false (subDecls, None)
                 | _ -> ()
-        loop true (decls, None)
+        phase1 true (decls, None)
 
         let enterTypeDef (entityDef: DEntityDef) =
             let (TypeBuilderOrFail typB) = entityResolutions.[entityDef.Ref]
-            let env = (envEmpty, entityDef.GenericParameters, typB.GenericTypeParameters) |||> Array.fold2 (fun env p a -> bindType env p a)
+            let env = (envEmpty, entityDef.GenericParameters, typB.GenericTypeParameters) |||> Array.fold2 bindType
             typB, env
+
+        //printfn "defining generic parameters..."
+        let rec phase1b decls =
+            for decl in decls do 
+                match decl with 
+                | DDeclEntity (entityDef, subDecls) ->
+                    if canEmitShellType entityDef then
+                        let (TypeBuilderOrFail typB) = entityResolutions.[entityDef.Ref]
+                        let typB, env  = enterTypeDef entityDef
+                        if entityDef.GenericParameters.Length > 0 then
+                            defineGenericParamaterConstraints env (typB.GetGenericArguments()) entityDef.GenericParameters
+                        phase1b (subDecls)
+                | _ -> ()
+        phase1b decls
 
         let buildCustomAttribute (attr: DCustomAttributeDef) =
             let ctorRef = 
@@ -769,21 +798,26 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                   GenericArity=0
                   ArgTypes= Array.map fst attr.ConstructorArguments
                   ReturnType= DType.DNamedType(attr.AttributeType, [| |]) }
-            match resolveMethod ctorRef with
-            | RMethod (:? ConstructorInfo as ctor) -> 
-                let ctorArgs = Array.map snd attr.ConstructorArguments
-                let props = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetProperty(nm))
-                let propVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, _, _, v) -> v)
-                let flds = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetField(nm))
-                let fldVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, _, _, v) -> v)
-                let cb = CustomAttributeBuilder(ctor, ctorArgs, props, propVals, flds, fldVals)
-                cb
-            | _ -> failwith "unexpected: couldn't resolve ctor"
+            let ctor = 
+                match shellTypeConstructorBuilders.TryGetValue(ctorRef) with 
+                | true, (v, _) -> (v :> ConstructorInfo)
+                | _ -> 
+                match resolveMethod ctorRef with
+                | RMethod (:? ConstructorInfo as ctor) -> ctor
+                | _ -> failwith "unexpected: couldn't resolve ctor"
+
+            let ctorArgs = Array.map snd attr.ConstructorArguments
+            let props = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetProperty(nm))
+            let propVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> isProp) |> Array.map (fun (_, _, _, v) -> v)
+            let flds = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, nm, _, _) -> ctor.DeclaringType.GetField(nm))
+            let fldVals = attr.NamedArguments |> Array.filter (fun (_, _, isProp, _) -> not isProp) |> Array.map (fun (_, _, _, v) -> v)
+            let cb = CustomAttributeBuilder(ctor, ctorArgs, props, propVals, flds, fldVals)
+            cb
 
         let buildCustomAttributes (attrs: DCustomAttributeDef[]) f =
             Array.iter (buildCustomAttribute >> f) attrs
 
-        printfn "defining base type and define the interfaces..."
+        //printfn "defining base type and define the interfaces..."
         /// Set the base type and define the interfaces
         let rec phase2(decls: DDecl[]) = 
             for decl in decls do
@@ -806,7 +840,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         phase2(decls)
 
 
-        printfn "defining define the virtual methods and fields..."
+        //printfn "defining define the virtual methods and fields..."
 
         /// Define the methods
         let rec phase3(decls: DDecl[]) = 
@@ -876,15 +910,16 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 ||| MethodAttributes.HideBySig
 
                         let mB = typB.DefineMethod(membDef.Name, attrs, cconv, returnTypeT, paramTypesT)
-                        for (i, pn) in Array.indexed membDef.Parameters do  
-                            mB.DefineParameter(i+1, ParameterAttributes.None, pn.Name) |> ignore
 
                         // Define the generic parameters on the method
                         if membDef.GenericParameters.Length > 0 then 
-                            for gpB in mB.DefineGenericParameters([| for p in membDef.GenericParameters -> p.Name |]) do
-                                // TODO set constraints up correctly
-                                gpB.SetGenericParameterAttributes(GenericParameterAttributes.None)
-                                gpB.SetInterfaceConstraints [| |]
+                            mB.DefineGenericParameters [| for gp in membDef.GenericParameters -> gp.Name |] |> ignore
+
+                            let env = (env, membDef.GenericParameters, mB.GetGenericArguments()) |||> Array.fold2 bindType
+                            defineGenericParamaterConstraints env (mB.GetGenericArguments()) membDef.GenericParameters
+
+                        for (i, pn) in Array.indexed membDef.Parameters do  
+                            mB.DefineParameter(i+1, ParameterAttributes.None, pn.Name) |> ignore
 
                         shellTypeMethodBuilders.[membRef] <- (mB, paramTypesT, returnTypeT)
                 | _ -> ()
@@ -896,8 +931,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             ilg.Emit(OpCodes.Ldsfld, ctxtFld)
             ilg.Emit(OpCodes.Ldc_I4, thunkId)
 
+            assert (gps.Length = gpTys.Length)
             // Create the array of type arguments 
-            ilg.Emit(OpCodes.Ldc_I4, gps.Length)
+            ilg.Emit(OpCodes.Ldc_I4, gpTys.Length)
             ilg.Emit(OpCodes.Newarr, typeof<obj>)
             for i in 0 .. gpTys.Length - 1 do
                 ilg.Emit(OpCodes.Dup)
@@ -925,7 +961,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                 ilg.Emit(OpCodes.Dup)
                 ilg.Emit(OpCodes.Ldc_I4, i+arrAdjust)
                 ilg.Emit(OpCodes.Ldarg, i+argAdjust)
-                if paramTypesT.[i].IsValueType then
+                if paramTypesT.[i].IsValueType || paramTypesT.[i].IsGenericParameter then
                     ilg.Emit(OpCodes.Box, paramTypesT.[i])
                 ilg.Emit(OpCodes.Stelem_Ref)
 
@@ -933,7 +969,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             ilg.Emit(OpCodes.Call, typeof<EvalContext>.GetMethod("InterpretExpressionThunk"))
             if exprT = typeof<Void> then
                 ilg.Emit(OpCodes.Pop)
-            elif exprT.IsValueType then
+            elif exprT.IsValueType || exprT.IsGenericParameter then
                 ilg.Emit(OpCodes.Unbox_Any, exprT)
                         
             let thunk = ctxt.EvalMethodLambda (envEmpty, false, isCaptureThis, gps, ps, body)
@@ -986,11 +1022,11 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         ilg.Emit(OpCodes.Ldarg, 0)
                         // The arguments to the constructor are evaluated in the interpreter
                         for (baseCtorArg, baseCtorParamType) in Array.zip baseCtorArgs ibaseCtorParamTypes do
-                            EmitInterpretExpression(ilg, [| |], gpTys, false, true, membDef.Parameters, paramTypesT, typB, baseCtorParamType, baseCtorArg)
+                            EmitInterpretExpression(ilg, entityDef.GenericParameters, gpTys, false, true, membDef.Parameters, paramTypesT, typB, baseCtorParamType, baseCtorArg)
 
                         ilg.Emit(OpCodes.Call, ibaseCtorInfo)
 
-                        EmitInterpretExpression(ilg, [| |], gpTys, true, true, membDef.Parameters, paramTypesT, typB, typeof<Void>, initCode)
+                        EmitInterpretExpression(ilg, entityDef.GenericParameters, gpTys, true, true, membDef.Parameters, paramTypesT, typB, typeof<Void>, initCode)
 
                         ilg.Emit(OpCodes.Ret)
 
@@ -999,8 +1035,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     else
                         let mB, paramTypesT, returnTypeT = shellTypeMethodBuilders.[membRef]
                         let gpTys = Array.append (typB.GetGenericArguments()) (mB.GetGenericArguments())
+                        let env = (env, membDef.GenericParameters, mB.GetGenericArguments()) |||> Array.fold2 bindType
                         let ilg = mB.GetILGenerator()
-                        EmitInterpretExpression(ilg, membDef.GenericParameters, gpTys, membDef.IsInstance, membDef.IsInstance, membDef.Parameters, paramTypesT, typB, returnTypeT, body)
+                        EmitInterpretExpression(ilg, Array.append entityDef.GenericParameters membDef.GenericParameters, gpTys, membDef.IsInstance, membDef.IsInstance, membDef.Parameters, paramTypesT, typB, returnTypeT, body)
                         ilg.Emit(OpCodes.Ret)
                         
                         // Emit the method overrides
@@ -1014,7 +1051,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 let methArgs = if slotR.IsGenericMethod then slotR.GetGenericArguments() else [| |]
                                 let slotV = instantiateMethod slotR slotDeclType.GenericTypeArguments methArgs
                                 //let slotV2 = typeof<obj>.GetMethod("ToString")
-                                printfn "\nslot.Name = %s, mB = %A, slotV = %A, returnTypeT = %A\n\n" slot.Member.Name mB slotV returnTypeT
+                                //printfn "\nslot.Name = %s, mB = %A, slotV = %A, returnTypeT = %A\n\n" slot.Member.Name mB slotV returnTypeT
                                 //printfn "\nslotV2 = %A, (slotV = slotV2) = %b\n\n" slotV2 (slotV = slotV2)
                                 typB.DefineMethodOverride(mB, slotV)
 
@@ -1068,13 +1105,16 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                 | _ -> ()
         loop decls
 
-    member ctxt.EvalMethodLambda(env, isCtor, isInstance, typeParameters, parameters: DLocalDef[], bodyExpr) = 
+    member ctxt.EvalMethodLambda(env, isCtor, isInstance, gps: DGenericParameterDef[], parameters: DLocalDef[], bodyExpr) = 
         MethodLambdaValue
           (FuncConvert.FromFunc<Type[] * obj[],obj>(fun (tyargs, args) -> 
+            assert (gps.Length = tyargs.Length)
+            let adjustedArgs = (if isInstance then args.[1..] else args)
+            assert (parameters.Length = adjustedArgs.Length)
             if parameters.Length + (if isInstance then 1 else 0) <> args.Length then failwithf "arg/parameter mismatch for method with arguments %A" parameters
             let env = if isInstance then bindByName env "$this" (Value args.[0]) else env
-            let env = (env, parameters, (if isInstance then args.[1..] else args)) |||> Array.fold2 (fun env p a -> bind sink env p (Value a))
-            let env = (env, typeParameters, tyargs) |||> Array.fold2 (fun env p a -> bindType env p a)
+            let env = (env, parameters, adjustedArgs) |||> Array.fold2 (fun env p a -> bind sink env p (Value a))
+            let env = (env, gps, tyargs) |||> Array.fold2 bindType
             if isCtor then 
                 let objV = Value null
                 let env = bindByName env "$this" objV
@@ -1098,71 +1138,28 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let rec loop decls = 
             [| for d in decls do
                 match d with 
-                | DDeclEntity (e, subDecls) -> 
-                
-                    // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
-                    // the attribute type passing the target type as an attribute.
-                    //
-                    // When a live checking attribute is attached to a type
-                    // we expect the attribute type to implement an Invoke method
-                    // taking the target type and the location information related
-                    // to the check for diagnostic production.
-                    if evalLiveChecksOnly then
-                        let tgt = resolveEntity (e.Ref)
-                        match tgt with 
-                        | REntity (targetType, _) -> 
-                            let liveShape = 
-                                targetType.GetCustomAttributes(true) |> Array.tryFind (fun a -> 
-                                    a.GetType().Name = "LiveCheckAttribute")
-                            match liveShape with
-                            | None  -> ()
-                            | Some attr -> 
-                                // Grab the source locations of the methods with LiveCheck attributes to pass to the checker for
-                                // better error location reporting
-                                let methLocs =
-                                    [| for  meth in decls do
-                                         match meth with 
-                                         | DDeclMember (membDef, body, isLiveCheck) -> 
-                                             printfn "checking meth %A" membDef.Name
-                                             let methParent = resolveEntity(membDef.EnclosingEntity)
-                                             match methParent with 
-                                             | REntity (targetType2, _) when targetType = targetType2 -> 
-                                                if membDef.CustomAttributes |> Array.exists (fun a -> 
-                                                       let (DEntityRef nm) = a.AttributeType 
-                                                       nm.Contains("LiveCheckAttribute")) then
-                                                   match membDef.Range with 
-                                                   | None -> ()
-                                                   | Some m -> 
-                                                       yield (membDef.Name, m.File, m.StartLine, m.StartColumn, m.EndLine, m.EndColumn)
-                                             | _ -> ()
-                                         | _ -> ()
+                | DDeclEntity (entity, subDecls) -> 
+                    let entityR = resolveEntity (entity.Ref)
+                    match entityR with
+                    | REntity (targetType, _) ->
+                        let entityDecls =
+                            [| for  meth in decls do
+                                match meth with 
+                                | DDeclMember (membDef, _body, _isLiveCheck) -> 
+                                    match meth with 
+                                    | DDeclMember (membDef, body, isLiveCheck) -> 
+                                        let methParent = resolveEntity(membDef.EnclosingEntity)
+                                        match methParent with 
+                                        | REntity (targetType2, _) when targetType = targetType2 -> 
+                                            yield membDef, body
+                                        | _ -> ()
+                                    | _ -> ()
+                                | _ -> ()
                                         
-                                        |]
-                                printfn "methLocs = %A" methLocs
-                                let res =
-                                    try 
-                                        protectEval false e.Range (fun () ->
-                                            let loc = defaultArg e.Range { File=""; StartLine=0; StartColumn=0; EndLine=0; EndColumn=0 }
-                                            let args = [| box targetType; box methLocs; box loc.File; box loc.StartLine; box loc.StartColumn; box loc.EndLine; box loc.EndColumn |]
-                                            let res = protectInvoke (fun () -> attr.GetType().InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, attr, args))
-                                            let diags = 
-                                                match res with 
-                                                | :? (((* severity *) int * (* number *) int * (* file *) string * int * int * int * int * (* message *) string)[]) as diags -> diags
-                                                | _ -> 
-                                                    failwith "incorrect return type from attribute Invoke"
-                                            [| for (severity, number, file, startLine, startCol, endLine, endCol, msg) in diags do
-                                                  let loc = { File=file; StartLine=startLine; StartColumn=startCol; EndLine=endLine; EndColumn=endCol }
-                                                  { Severity=severity
-                                                    Number = number
-                                                    Message = msg 
-                                                    Stack = Option.toList e.Range @ [loc] }  |])
-                                    with exn -> 
-                                        [| DiagnosticFromException exn |]
-                                yield! res
-
-                        | _ -> () //if failwith "couldn't target is --dyntypes on?"
-
-                        yield! loop subDecls
+                            |]
+                        yield! sink.CheckEntityDecl(entity, entityR, entityDecls)
+                    | _ -> ()
+                    yield! loop subDecls
 
                 | DDeclMember (membDef, body, isLiveCheck) -> 
                     if (membDef.IsValueDef && not evalLiveChecksOnly) || 
@@ -1667,7 +1664,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
     member ctxt.EvalTypeLambda(env, genericParams, bodyExpr) =
         (fun (typeArgs: Type[]) -> 
-            let env = (env, genericParams, typeArgs) |||> Array.fold2 (fun env p a -> bindType env p a)
+            let env = (env, genericParams, typeArgs) |||> Array.fold2 bindType
             ctxt.EvalExpr(env, bodyExpr) |> getVal) 
         |> box |> Value
 

@@ -124,7 +124,13 @@ and DMemberDef =
           ReturnType = x.ReturnType }
 
 and DGenericParameterDef = 
-    { Name: string }
+    { Name: string
+      InterfaceConstraints: DType[] 
+      BaseTypeConstraint: DType option
+      DefaultConstructorConstraint: bool
+      NotNullableValueTypeConstraint: bool
+      ReferenceTypeConstraint: bool
+      }
 
 and DEntityDef = 
     { QualifiedName: string

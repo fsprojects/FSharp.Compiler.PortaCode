@@ -711,7 +711,7 @@ if c.MoveNext() <> false then failwith "fail fail!"
 [<TestCase(true)>]
 [<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleGenericInterfaceImpl(dyntypes) =
-    SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
+    SimpleTestCase false dyntypes "SimpleGenericInterfaceImpl" """
 open System.Collections
 open System.Collections.Generic
 type C() =
@@ -729,6 +729,50 @@ if c.Reset() <> () then failwith "fail fail 2!"
 if c.MoveNext() <> false then failwith "fail fail!" 
         """
  
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let GenericMethodWithConstraint(dyntypes) =
+    SimpleTestCase false dyntypes "GenericMethodWithConstraint" """
+
+open System
+let f<'T when 'T :> IComparable> (x: 'T) = (x, x)
+
+let (a,b) = f 3.0
+
+if a <> 3.0 then failwith "fail fail!" 
+if b <> 3.0 then failwith "fail fail!" 
+        """
+ 
+[<TestCase(true)>]
+[<TestCase(false)>]
+let GenericClassWithConstraint(dyntypes) =
+    SimpleTestCase false dyntypes "GenericClassWithConstraint" """
+
+open System
+type C<'T when 'T :> IComparable> (x: 'T) = 
+    member _.Call() = (x, x)
+
+let (a,b) = C<double>(3.0).Call()
+
+if a <> 3.0 then failwith "fail fail!" 
+if b <> 3.0 then failwith "fail fail!" 
+        """
+
+[<TestCase(true)>]
+[<TestCase(false)>]
+let GenericMethodInGenericClassWithConstraint(dyntypes) =
+    SimpleTestCase false dyntypes "GenericClassWithConstraint" """
+
+open System
+type C<'T when 'T :> IComparable> (x: 'T) = 
+    member _.Call<'U when 'U :> IComparable>(y) = (x, y)
+
+let (a,b) = C<double>(3.0).Call<double>(4.0)
+
+if a <> 3.0 then failwith "fail fail!" 
+if b <> 4.0 then failwith "fail fail!" 
+        """
+
 [<TestCase(true, Ignore= "ignore because union types don't get dynamic emit types yet, codegen is too complicated and FCS doesn't tell us how") >]
 [<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let UnionTypeWithOverride(dyntypes) =

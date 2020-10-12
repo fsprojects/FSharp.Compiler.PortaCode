@@ -8,12 +8,13 @@
         <Compile Include="CodeModel.fs" />
         <Compile Include="Interpreter.fs" />
         <Compile Include="FromCompilerService.fs" />
+        <Compile Include="LiveCheckEvaluation.fs" />
         <Compile Include="ProcessCommandLine.fs" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Update="FSharp.Core" Version="4.7.2" />
         <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
-        <PackageReference Include="FSharp.Compiler.Service"  Version="37.0.0" />
-        <PackageReference Include="Dotnet.ProjInfo"  Version="0.44.0" />
+        <PackageReference Include="FSharp.Compiler.Service" Version="37.0.0" />
+        <PackageReference Include="Dotnet.ProjInfo" Version="0.44.0" />
     </ItemGroup>
 </Project>
