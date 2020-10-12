@@ -12,7 +12,7 @@ open System.IO
 open FSharp.Compiler.SourceCodeServices
 open System.Text
 
-type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, livecheck) =
+type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions) =
 
     let mutable assemblyNameId = 0
     let emitInfoFile (sourceFile: string) lines = 
@@ -153,12 +153,14 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
 
                for diag in diags do 
                     printfn "%s" (diag.ToString())
-                    if List.length diag.Stack > 0 then 
-                        let range = List.last diag.Stack
-                        let message = "LiveCheck failed: " + diag.Message.Replace("\t"," ").Replace("\r","   ").Replace("\n","\\n") 
-                        let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
-                        let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
-                        yield line |]
+                    let range = diag.Location
+                    let message = 
+                       "LiveCheck: " + diag.Message + 
+                       ([| for m in Array.tail (Array.rev diag.LocationStack) -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
+                    let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
+                    let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
+                    let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
+                    yield line |]
 
         emitInfoFile sourceFile lines
 
@@ -196,15 +198,18 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
                                 let res = protectInvoke (fun () -> attr.GetType().InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, attr, args))
                                 let diags = 
                                     match res with 
-                                    | :? (((* severity *) int * (* number *) int * (* file *) string * int * int * int * int * (* message *) string)[]) as diags -> diags
+                                    | :? (((* severity *) int * (* number *) int * ((* file *) string * int * int * int * int)[] * (* message *) string)[]) as diags -> diags
                                     | _ -> 
                                         failwith "incorrect return type from attribute Invoke"
-                                [| for (severity, number, file, startLine, startCol, endLine, endCol, msg) in diags do
-                                      let loc = { File=file; StartLine=startLine; StartColumn=startCol; EndLine=endLine; EndColumn=endCol }
+                                [| for (severity, number, locstack, msg) in diags do
+                                      let stack = 
+                                         [| yield! Option.toList entity.Range
+                                            for (file,sl,sc,el,ec) in locstack do
+                                                { File=file; StartLine=sl; StartColumn=sc; EndLine=el; EndColumn=ec } |]
                                       { Severity=severity
                                         Number = number
                                         Message = msg 
-                                        Stack = Option.toList entity.Range @ [loc] }  |])
+                                        LocationStack = stack }  |])
                         with exn -> 
                             [| DiagnosticFromException exn |]
                     res
@@ -287,7 +292,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
         let assemblyName = AssemblyName("Eval" + string assemblyNameId)
         let ctxt = EvalContext(assemblyName, dyntypes, assemblyResolver, ?sink=sink)
         let convFile (i: FSharpImplementationFileContents) =         
-            i.FileName, { Code = Convert(keepRanges).ConvertDecls i.Declarations }
+            i.FileName, { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
 
         let fileConvContents = [| for i in fileContents -> convFile i |]
 

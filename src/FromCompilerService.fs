@@ -14,7 +14,9 @@ module List =
 module Seq = 
     let mapToArray f arr = arr |> Array.ofSeq |> Array.map f
 
-type Convert(includeRanges: bool) = 
+exception IncompleteExpr 
+
+type Convert(includeRanges: bool, tolerateIncomplete: bool) = 
 
     let rec convExpr (expr:FSharpExpr) : DExpr = 
 
@@ -37,6 +39,11 @@ type Convert(includeRanges: bool) =
         | BasicPatterns.Application(funcExpr, typeArgs, argExprs) -> 
             let rangeR = convRange expr.Range
             DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs, rangeR)
+
+        // The F# Compiler Service inserts "raise 1" for expressions that don't check
+        | BasicPatterns.Call(_, memberOrFunc, _, _, [ BasicPatterns.Const((:? int as c), _) ]) 
+             when c = 1 && memberOrFunc.CompiledName = "Raise" -> 
+                raise IncompleteExpr
 
         | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
@@ -458,11 +465,25 @@ type Convert(includeRanges: bool) =
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods
                //if v.IsValCompiledAsMethod || not v.IsMember then
                let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
-               let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
-               yield DDeclMember (vR, eR, isLiveCheck)
+               let eR = try Ok (convExpr e) with exn -> Error exn
+               match eR with 
+               | Ok eR -> 
+                   yield DDeclMember (vR, eR, isLiveCheck)
+               | Error exn -> 
+                   match exn with 
+                   | IncompleteExpr when tolerateIncomplete -> () 
+                   | _ -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
 
            | FSharpImplementationFileDeclaration.InitAction(e) -> 
-               yield DDecl.InitAction (convExpr e, convRange e.Range) |]
+               let eR = try Ok (convExpr e) with exn -> Error exn
+               match eR with 
+               | Ok eR -> 
+                   yield DDecl.InitAction (eR, convRange e.Range)
+               | Error exn -> 
+                   match exn with 
+                   | IncompleteExpr when tolerateIncomplete -> () 
+                   | _ -> failwithf "error converting expression\n%A" exn
+        |]
 
     and convDecls decls = 
         decls |> Array.ofList |> Array.collect convDecl 

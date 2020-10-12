@@ -15,11 +15,12 @@ type DDiagnostic =
    { Severity: int
      Number: int
      Message: string
-     Stack: DRange list }
+     LocationStack: DRange[] }
 
+   member diag.Location = Array.last diag.LocationStack 
    override diag.ToString() = 
        let sev = match diag.Severity with 0 -> "info" | 1 -> "warning" | _ -> "error"
-       match List.rev diag.Stack with 
+       match List.ofArray (Array.rev diag.LocationStack) with 
        | [] -> 
            sprintf "%s LC%d: %O" sev diag.Number diag.Message
        | loc:: t -> 

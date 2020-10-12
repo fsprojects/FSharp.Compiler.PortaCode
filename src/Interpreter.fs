@@ -190,6 +190,15 @@ let protectInvoke f =
     try f() 
     with exn -> protectRaise exn
 
+let WilFailTraitCallInvoke (traitName, sourceTypeR: Type, isInstance) =
+    let bindingFlags =
+        (if isInstance then BindingFlags.Instance else BindingFlags.Static) 
+        ||| BindingFlags.Public 
+        ||| BindingFlags.NonPublic 
+        ||| BindingFlags.FlattenHierarchy
+    let meths = sourceTypeR.GetMethods(bindingFlags) |> Array.filter (fun n -> n.Name = traitName) 
+    meths.Length = 0 
+
 let EvalTraitCallInvoke (traitName, sourceTypeR: Type, isInstance, argExprsV: obj[]) =
     let objV = if isInstance then argExprsV.[0] else null
     let argsV = if isInstance then argExprsV.[1..] else argExprsV
@@ -277,19 +286,19 @@ type System.Exception with
         with get() = 
             if e.Data.Contains "location" then 
                 match e.Data.["location"] with 
-                | :? (DRange list) as stack -> stack
-                | _ -> []
+                | :? ((string * int * int * int * int)[]) as stack -> stack
+                | _ -> [| |]
             else
-                []
-        and set (data : DRange list) = 
+                [| |]
+        and set (data : (string * int * int * int * int)[]) = 
             e.Data.["location"] <- data
 
 let DiagnosticFromException (err: exn) =
-    let stack = err.EvalLocationStack
+    let stack = [| for (f,sl,sc,el,ec) in err.EvalLocationStack -> { File=f;StartLine=sl;StartColumn=sc;EndLine=el;EndColumn=ec }  |]
     { Severity=2; 
       Number = 1001
       Message = err.Message
-      Stack = stack }
+      LocationStack = stack }
 
 /// If an exception happens, record the range in the exception
 let protectEval compgen (r: DRange option) f = 
@@ -298,7 +307,10 @@ let protectEval compgen (r: DRange option) f =
     else
         try f() 
         with e -> 
-            e.EvalLocationStack <- r.Value :: e.EvalLocationStack
+            e.EvalLocationStack <-
+                (let m = r.Value
+                 [| yield (m.File, m.StartLine, m.StartColumn, m.EndLine, m.EndColumn)
+                    yield! e.EvalLocationStack |])
             raise e
 
 /// Context for evaluation/interpretation
@@ -1393,9 +1405,14 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         match sourceTypesR with 
         | [| sourceTypeR |] -> 
             EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
-        | [| sourceTypeR; sourceTypeR2 |] when sourceTypeR.Equals(sourceTypeR2) || traitName = "op_Dynamic" -> 
+        | [| sourceTypeR; sourceTypeR2 |] 
+              when sourceTypeR.Equals(sourceTypeR2) ||
+                   WilFailTraitCallInvoke (traitName, sourceTypeR2, isInstance) -> 
             EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
-        | _ -> failwithf "trait/operator call on '%s' NYI in interpreter - multiple different source types" traitName
+        | [| sourceTypeR; sourceTypeR2 |] 
+              when WilFailTraitCallInvoke (traitName, sourceTypeR, isInstance) -> 
+            EvalTraitCallInvoke(traitName, sourceTypeR2, isInstance, argExprsV)
+        | _ -> failwithf "trait/operator call on '%s' NYI in interpreter - multiple different source types with ambiguity" traitName
 
     member ctxt.EvalExprs(env, argExprs) =
         let argsV =  argExprs |> Array.map (fun argExpr -> ctxt.EvalExpr(env, argExpr))

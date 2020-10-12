@@ -200,9 +200,10 @@ let ProcessCommandLine (argv: string[]) =
             Result.Error (None, Some exn, None, None)
 
     let keepRanges = not dump
+    let tolerateIncompleteExpressions = livecheck && watch
     let convFile (i: FSharpImplementationFileContents) =         
         //(i.QualifiedName, i.FileName
-        i.FileName, { Code = Convert(keepRanges).ConvertDecls i.Declarations }
+        i.FileName, { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
 
     let checkFiles files =             
         let rec loop rest acc = 
@@ -259,7 +260,7 @@ let ProcessCommandLine (argv: string[]) =
 
             if not dump && webhook.IsNone then 
                 printfn "fslive: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
-                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck)
+                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
                 match evaluator.EvaluateDecls implFiles with
                 | Error _ when not watch -> exit 1
                 | _ -> ()
