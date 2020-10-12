@@ -44,7 +44,7 @@ type Convert(includeRanges: bool) =
             let typeArgs1R = convTypes typeArgs1
             let typeArgs2R = convTypes typeArgs2
             let argExprsR = convArgExprs memberOrFunc argExprs
-            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt @ argExprs) |> List.map (fun e -> e.Range)))
             match objExprOptR with 
             // FCS TODO: Fix quirk with extension members so this isn't needed
             | Some objExprR when memberOrFunc.IsExtensionMember || not memberOrFunc.IsInstanceMemberInCompiledCode  -> 
@@ -187,6 +187,7 @@ type Convert(includeRanges: bool) =
     and trimRanges (rangesToRemove: range list) (range: range) =
         // Optional arguments inserted by the F# compiler get ranges identical to 
         // the whole expression.  Don't remove these 
+        printfn "trimRanges --> "
         let rangesToRemove = rangesToRemove |> List.filter (fun m -> not (m = range))
         (range, rangesToRemove) ||> List.fold trimRange
          
@@ -210,6 +211,7 @@ type Convert(includeRanges: bool) =
               m1.Start, posMin m1.End (posMinusOne m2.Start)
 
        let res = mkRange m1.FileName  p1 p2
+       printfn "m1 = %A, m2 = %A, res = %A" m1 m2 res
        res
          
     and convExprOpt exprs = 
