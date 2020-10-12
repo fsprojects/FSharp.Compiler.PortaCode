@@ -44,7 +44,7 @@ type Convert(includeRanges: bool) =
             let typeArgs1R = convTypes typeArgs1
             let typeArgs2R = convTypes typeArgs2
             let argExprsR = convArgExprs memberOrFunc argExprs
-            let rangeR = convRange expr.Range
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             match objExprOptR with 
             // FCS TODO: Fix quirk with extension members so this isn't needed
             | Some objExprR when memberOrFunc.IsExtensionMember || not memberOrFunc.IsInstanceMemberInCompiledCode  -> 
@@ -85,18 +85,20 @@ type Convert(includeRanges: bool) =
         | BasicPatterns.NewDelegate(delegateType, delegateBodyExpr) -> 
             DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
-        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> 
-            let rangeR = convRange expr.Range
+        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs: FSharpExpr list) -> 
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs, rangeR)
 
         | BasicPatterns.NewRecord(recordType, argExprs) -> 
-            DExpr.NewRecord(convType recordType, convExprs argExprs)
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            DExpr.NewRecord(convType recordType, convExprs argExprs, rangeR)
 
         | BasicPatterns.NewTuple(tupleType, argExprs) -> 
             DExpr.NewTuple(convType tupleType, convExprs argExprs)
 
         | BasicPatterns.NewUnionCase(unionType, unionCase, argExprs) -> 
-            DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs)
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs, rangeR)
 
         | BasicPatterns.Quote(quotedExpr) -> 
             DExpr.Quote(convExpr quotedExpr)
@@ -181,6 +183,35 @@ type Convert(includeRanges: bool) =
     and convExprs exprs = 
         Array.map convExpr (Array.ofList exprs)
 
+    // Trim out the ranges of argument expressions
+    and trimRanges (rangesToRemove: range list) (range: range) =
+        // Optional arguments inserted by the F# compiler get ranges identical to 
+        // the whole expression.  Don't remove these 
+        let rangesToRemove = rangesToRemove |> List.filter (fun m -> not (m = range))
+        (range, rangesToRemove) ||> List.fold trimRange
+         
+    // Exclude range m2 from m
+    and trimRange (m1: range) (m2: range) =
+       let posLeq p1 p2 = not (posGt p1 p2)
+       let posGeq p1 p2 = not (posLt p1 p2)
+       let posMin p1 p2 = if posLt p1 p2 then p1 else p2
+       let posMax p1 p2 = if posLt p1 p2 then p2 else p1
+       let posPlusOne (p: pos) = mkPos p.Line (p.Column+1)
+       let posMinusOne (p: pos) = mkPos p.Line (max 0 (p.Column-1))
+       let p1, p2 = 
+          // Trim from start
+          if posLeq m2.Start m1.Start then 
+              posMax m1.Start (posPlusOne m2.End), m1.End
+          // Trim from end
+          elif posGeq m2.End m1.End then 
+              m1.Start, posMin m1.End (posMinusOne m2.Start)
+          // Trim from middle, treated as trim from end, this is an argument "x.foo(y)"
+          else
+              m1.Start, posMin m1.End (posMinusOne m2.Start)
+
+       let res = mkRange m1.FileName  p1 p2
+       res
+         
     and convExprOpt exprs = 
         Option.map convExpr exprs
 

@@ -44,11 +44,11 @@ type DExpr =
     | NewObject of DMemberRef * DType[] * DExpr[] * DRange option
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
-    | NewRecord of DType * DExpr[] 
+    | NewRecord of DType * DExpr[] * DRange option
     | ObjectExpr of DType * DExpr * DObjectExprOverrideDef[] * (DType * DObjectExprOverrideDef[])[]
     | FSharpFieldGet of  DExpr option * DType * DFieldRef 
     | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr 
-    | NewUnionCase of DType * DUnionCaseRef * DExpr[]  
+    | NewUnionCase of DType * DUnionCaseRef * DExpr[] * DRange option
     | UnionCaseGet of DExpr * DType * DUnionCaseRef * DFieldRef 
     | UnionCaseSet of DExpr * DType * DUnionCaseRef * DFieldRef  * DExpr
     | UnionCaseTag of DExpr * DType 

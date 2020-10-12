@@ -124,31 +124,32 @@ let getVal (Value v) = v
 
 let bindAll = BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance ||| BindingFlags.Static
 
-/// A sink to report operation of the interpreter
+/// A sink to observe operation of the interpreter. A little like a debug API.
 type Sink = 
 
-    /// Called whenever a call is completed, showing caller reference and called method
-    abstract CheckEntityDecl: entity: DEntityDef * entityR: ResolvedEntity * memberDecls: (DMemberDef * DExpr)[] -> DDiagnostic[]
+    /// Called after an enitity declaration is established.  If dynamic emit of types
+    /// is enabled then the System.Type for the entity will be available in entityR
+    abstract NotifyEstablishEntityDecl: entity: DEntityDef * entityR: ResolvedEntity * memberDecls: (DMemberDef * DExpr)[] -> DDiagnostic[]
 
     /// Called whenever a call is completed, showing caller reference and called method
-    abstract CallAndReturn: caller: DMemberRef option * callerRange: DRange option * callee: Choice<MethodInfo, DMemberDef> * typeArgs: Type[] * args: obj[] * returnValue: Value -> unit
+    abstract NotifyCallAndReturn: caller: DMemberRef option * callerRange: DRange option * callee: Choice<MethodInfo, DMemberDef> * typeArgs: Type[] * args: obj[] * returnValue: Value -> unit
 
     /// Called whenever a value in a module is computed
-    abstract BindValue: DMemberDef * Value -> unit
+    abstract NotifyBindValue: DMemberDef * Value -> unit
 
     /// Called whenever a parameter is bound or a local is computed
-    abstract BindLocal : DLocalDef * Value -> unit
+    abstract NotifyBindLocal : DLocalDef * Value -> unit
 
     /// Called whenever a local is used
-    abstract UseLocal: DLocalRef * Value -> unit
+    abstract NotifyUseLocal: DLocalRef * Value -> unit
 
 let emptySink = 
     { new Sink with 
-          member _.CheckEntityDecl(_,_,_) = [| |]
-          member _.CallAndReturn(_,_,_,_,_,_) = ()
-          member _.BindValue(_,_) = ()
-          member _.BindLocal(_,_) = ()
-          member _.UseLocal(_,_) = () }
+          member _.NotifyEstablishEntityDecl(_,_,_) = [| |]
+          member _.NotifyCallAndReturn(_,_,_,_,_,_) = ()
+          member _.NotifyBindValue(_,_) = ()
+          member _.NotifyBindLocal(_,_) = ()
+          member _.NotifyUseLocal(_,_) = () }
 
 type Env = 
    { Vals: Map<string, Value>
@@ -162,7 +163,7 @@ let bindByName (env: Env) varName value =
     { env with Vals = env.Vals.Add(varName, value) }
 
 let bind (sink: Sink) (env: Env) (var: DLocalDef) (value: Value) = 
-    sink.BindLocal(var, value)
+    sink.NotifyBindLocal(var, value)
     bindByName env var.Name value
 
 let bindMany sink env vars values  = 
@@ -706,7 +707,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         //if membDef.Name <> "ToString" then 
         //   printfn "InterpretExpressionThunk:res = %A" res
         //if membDef.Name <> "ToString" then 
-        //    sink.CallAndReturn(None (* no caller references available for these invokes *), Choice2Of2 membDef, typeArgsV, argsV, Value res)
+        //    sink.NotifyCallAndReturn(None (* no caller references available for these invokes *), Choice2Of2 membDef, typeArgsV, argsV, Value res)
         res
 
 
@@ -1157,7 +1158,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 | _ -> ()
                                         
                             |]
-                        yield! sink.CheckEntityDecl(entity, entityR, entityDecls)
+                        yield! sink.NotifyEstablishEntityDecl(entity, entityR, entityDecls)
                     | _ -> ()
                     yield! loop subDecls
 
@@ -1168,7 +1169,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         let res = ctxt.TryEvalExpr (env, body, membDef.Range)
                         match res with 
                         | Ok res -> 
-                            sink.BindValue(membDef, res)
+                            sink.NotifyBindValue(membDef, res)
                             methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
                         | Error err -> 
                             yield DiagnosticFromException err 
@@ -1226,11 +1227,11 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | DExpr.NewObject(objCtor, typeArgs, argExprs, range) -> 
             ctxt.EvalNewObject(env, objCtor, typeArgs, argExprs, range)
 
-        | DExpr.NewRecord(recordType, argExprs) -> 
-            ctxt.EvalNewRecord(env, recordType, argExprs)
+        | DExpr.NewRecord(recordType, argExprs, range) -> 
+            ctxt.EvalNewRecord(env, recordType, argExprs, range)
 
-        | DExpr.NewUnionCase(unionType, unionCase, argExprs) -> 
-            ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs)
+        | DExpr.NewUnionCase(unionType, unionCase, argExprs, range) -> 
+            ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs, range)
 
         | DExpr.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
             ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo)
@@ -1343,7 +1344,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     match env.Vals.TryGetValue vref.Name with 
                     | true, res -> res
                     | _ -> failwithf "didn't find value '%s' in the environment at %A" vref.Name vref.Range 
-            sink.UseLocal(vref, res)
+            sink.NotifyUseLocal(vref, res)
             res
 
         | DExpr.ValueSet(vref, valueExpr, m) -> 
@@ -1426,7 +1427,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | UMethod (membDef, Value (:? MethodLambdaValue as fM )), RTypesErased env typeArgsV -> 
             let (MethodLambdaValue f) = fM
             let res = f (typeArgsV, argsV) |> Value
-            sink.CallAndReturn(Some objCtor, m, Choice2Of2 membDef, typeArgsV, argsV, res)
+            sink.NotifyCallAndReturn(Some objCtor, m, Choice2Of2 membDef, typeArgsV, argsV, res)
             res
         | _ -> 
             failwithf "unexpected constructor %A at types %A" methR typeArgsR
@@ -1556,7 +1557,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             let iminfo = instantiateMethod minfo typeArgs1V typeArgs2V
             let res = protectInvoke (fun () -> iminfo.Invoke(objOptV, argsV)) |> Value
 
-            sink.CallAndReturn(Some membRef, range, Choice1Of2 minfo, Array.append typeArgs1V typeArgs2V, argsV, res)
+            sink.NotifyCallAndReturn(Some membRef, range, Choice1Of2 minfo, Array.append typeArgs1V typeArgs2V, argsV, res)
 
             // Copy back the out parameters - note that argsV will have been mutates
             let parameters = minfo.GetParameters()
@@ -1580,7 +1581,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             let callArgsV = (match objOptV with null -> argsV | objV -> Array.append [| objV |] argsV)
             let callTypeArgsV = Array.append typeArgs1V typeArgs2V
             let res = f (callTypeArgsV, callArgsV) |> Value
-            sink.CallAndReturn(Some membRef, range, Choice2Of2 membDef, callTypeArgsV, argsV, res)
+            sink.NotifyCallAndReturn(Some membRef, range, Choice2Of2 membDef, callTypeArgsV, argsV, res)
             res
 
         | UMethod (_membDef, Value v), RTypes [| |], RTypes [| |] when argExprs.Length = 0 -> 
@@ -1680,7 +1681,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         argsV |> Array.iteri (fun i argV -> arr.SetValue(argV, i))
         Value arr
 
-    member ctxt.EvalNewRecord(env, recordType, argExprs) =
+    member ctxt.EvalNewRecord(env, recordType, argExprs, _range) =
         let recordTypeR = resolveType (env, recordType)
         let argsV = ctxt.EvalExprs(env, argExprs)
 
@@ -1691,7 +1692,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             let recdV = RecordValue argsV
             Value recdV
 
-    member ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs) =
+    member ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs, _range) =
         let unionCaseR = resolveUnionCase (env, unionType, unionCase)
         let argsV = ctxt.EvalExprs (env, argExprs)
 

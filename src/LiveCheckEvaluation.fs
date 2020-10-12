@@ -162,7 +162,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
 
         emitInfoFile sourceFile lines
 
-    member t.CheckEntityDecl(entity:DEntityDef, entityR: ResolvedEntity, methDecls: (DMemberDef * DExpr)[]) =
+    let runEntityDeclLiveChecks(entity:DEntityDef, entityR: ResolvedEntity, methDecls: (DMemberDef * DExpr)[]) =
         // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
         // the attribute type passing the target type as an attribute.
         //
@@ -237,10 +237,10 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
             if writeinfo then 
                 { new Sink with 
 
-                     member _.CheckEntityDecl(entity, entityR, entityDecls) =
-                         t.CheckEntityDecl(entity, entityR, entityDecls)
+                     member _.NotifyEstablishEntityDecl(entity, entityR, entityDecls) =
+                         runEntityDeclLiveChecks(entity, entityR, entityDecls)
 
-                     member __.CallAndReturn(mref, callerRange, mdef, _typeArgs, args, res) = 
+                     member __.NotifyCallAndReturn(mref, callerRange, mdef, _typeArgs, args, res) = 
                          let paramNames = 
                             match mdef with 
                              | Choice1Of2 minfo -> [| for p in minfo.GetParameters() -> p.Name |]
@@ -267,15 +267,15 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
                              callerRange |> Option.iter (fun r -> 
                                  tooltips.Add(r, lines, true))
 
-                     member __.BindValue(vdef, value) = 
+                     member __.NotifyBindValue(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
-                     member __.BindLocal(vdef, value) = 
+                     member __.NotifyBindLocal(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
-                     member __.UseLocal(vref, value) = 
+                     member __.NotifyUseLocal(vref, value) = 
                          if not vref.IsCompilerGenerated then 
                              vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
                 }
