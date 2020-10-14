@@ -85,7 +85,7 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "   --send            Equivalent to --send:%s" defaultUrl
                    printfn "   --projarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
                    printfn "   --dump            Dump the contents to console after each update"
-                   printfn "   --livecheck       Only evaluate those with a LiveCheck attribute"
+                   printfn "   --livecheck       Only evaluate those with a *CheckAttribute (e.g. LiveCheck or ShapeCheck)"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
                    printfn "                     Also write an info file based on results of evaluation."
                    printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"

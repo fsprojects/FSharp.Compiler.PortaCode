@@ -219,42 +219,42 @@ let inline unOp op (argsV: obj[]) f32 f64 =
     | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
 let inline binOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 d = 
-    match argsV.[0] with 
-    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? double as v1) -> match argsV.[1] with (:? double as v2) -> Value (box (f64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? single as v1) -> match argsV.[1] with (:? single as v2) -> Value (box (f32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int64 as v1) -> match argsV.[1] with (:? int64 as v2) -> Value (box (i64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int16 as v1) -> match argsV.[1] with (:? int16 as v2) -> Value (box (i16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? sbyte as v1) -> match argsV.[1] with (:? sbyte as v2) -> Value (box (i8 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint32 as v1) -> match argsV.[1] with (:? uint32 as v2) -> Value (box (u32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint64 as v1) -> match argsV.[1] with (:? uint64 as v2) -> Value (box (u64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? decimal as v1) -> match argsV.[1] with (:? decimal as v2) -> Value (box (d v1 v2)) | _ -> failwith "type match: operator"
+    match argsV.[0], argsV.[1] with
+    | (:? int32 as v1), (:? int32 as v2) -> Value (box (i32 v1 v2 : int32))
+    | (:? double as v1), (:? double as v2) -> Value (box (f64 v1 v2 : double))
+    | (:? single as v1), (:? single as v2) -> Value (box (f32 v1 v2 : float32))
+    | (:? int64 as v1), (:? int64 as v2) -> Value (box (i64 v1 v2 : int64))
+    | (:? int16 as v1), (:? int16 as v2) -> Value (box (i16 v1 v2 : int16))
+    | (:? sbyte as v1), (:? sbyte as v2) -> Value (box (i8 v1 v2 : sbyte))
+    | (:? uint32 as v1), (:? uint32 as v2) -> Value (box (u32 v1 v2 : uint32))
+    | (:? uint64 as v1), (:? uint64 as v2) -> Value (box (u64 v1 v2 : uint64))
+    | (:? uint16 as v1), (:? uint16 as v2) -> Value (box (u16 v1 v2 : uint16))
+    | (:? byte as v1), (:? byte as v2) -> Value (box (u8 v1 v2 : byte))
+    | (:? decimal as v1), (:? decimal as v2) -> Value (box (d v1 v2 : decimal))
     | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
 let inline shiftOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
-    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? sbyte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i8 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? byte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
+    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2: int32)) | _ -> failwith "type match: operator"
+    | (:? int64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i64 v1 v2: int64)) | _ -> failwith "type match: operator"
+    | (:? int16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i16 v1 v2: int16)) | _ -> failwith "type match: operator"
+    | (:? sbyte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i8 v1 v2: sbyte)) | _ -> failwith "type match: operator"
+    | (:? uint32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u32 v1 v2: uint32)) | _ -> failwith "type match: operator"
+    | (:? uint64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u64 v1 v2: uint64)) | _ -> failwith "type match: operator"
+    | (:? uint16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u16 v1 v2: uint16)) | _ -> failwith "type match: operator"
+    | (:? byte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u8 v1 v2: byte)) | _ -> failwith "type match: operator"
     | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
 let inline logicBinOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
-    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int64 as v1) -> match argsV.[1] with (:? int64 as v2) -> Value (box (i64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? int16 as v1) -> match argsV.[1] with (:? int16 as v2) -> Value (box (i16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? sbyte as v1) -> match argsV.[1] with (:? sbyte as v2) -> Value (box (i8 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint32 as v1) -> match argsV.[1] with (:? uint32 as v2) -> Value (box (u32 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint64 as v1) -> match argsV.[1] with (:? uint64 as v2) -> Value (box (u64 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2)) | _ -> failwith "type match: operator"
-    | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2)) | _ -> failwith "type match: operator"
+    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2: int32)) | _ -> failwith "type match: operator"
+    | (:? int64 as v1) -> match argsV.[1] with (:? int64 as v2) -> Value (box (i64 v1 v2: int64)) | _ -> failwith "type match: operator"
+    | (:? int16 as v1) -> match argsV.[1] with (:? int16 as v2) -> Value (box (i16 v1 v2: int16)) | _ -> failwith "type match: operator"
+    | (:? sbyte as v1) -> match argsV.[1] with (:? sbyte as v2) -> Value (box (i8 v1 v2: sbyte)) | _ -> failwith "type match: operator"
+    | (:? uint32 as v1) -> match argsV.[1] with (:? uint32 as v2) -> Value (box (u32 v1 v2: uint32)) | _ -> failwith "type match: operator"
+    | (:? uint64 as v1) -> match argsV.[1] with (:? uint64 as v2) -> Value (box (u64 v1 v2: uint64)) | _ -> failwith "type match: operator"
+    | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2: uint16)) | _ -> failwith "type match: operator"
+    | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2: byte)) | _ -> failwith "type match: operator"
     | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
 
 let inline logicUnOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
@@ -279,6 +279,40 @@ let negOp op (argsV: obj[]) =
     | (:? sbyte as v1) -> Value (box (-v1))
     | (:? decimal as v1) -> Value (box (-v1))
     | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+
+let minusOp argsV = binOp "op_Subtraction" argsV (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-)
+let divideOp argsV = binOp "op_Division" argsV (/) (/) (/) (/) (/) (/) (/) (/) (/) (/) (/)
+let modOp argsV = binOp "op_Modulus" argsV (%) (%) (%) (%) (%) (%) (%) (%) (%) (%) (%)
+let shiftleftOp argsV = shiftOp "op_LeftShift" argsV (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<)
+let shiftrightOp argsV = shiftOp "op_RightShift" argsV (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>)
+let landOp argsV = logicBinOp "op_BitwiseAnd" argsV (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&)
+let lorOp argsV = logicBinOp "op_BitwiseOr" argsV (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||)
+let lxorOp argsV = logicBinOp "op_ExclusiveOr" argsV (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^)
+let lnegOp argsV = logicUnOp "op_LogicalNot" argsV (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
+let checked_minusOp argsV = binOp "op_Subtraction" argsV Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-)
+let checked_mulOp argsV = binOp "op_Multiply" argsV Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*)
+let absOp argsV = unOp "Abs" argsV abs abs
+let acosOp argsV = unOp "Acos" argsV acos acos
+let asinOp argsV = unOp "Asin" argsV asin asin
+let atanOp argsV = unOp "Atan" argsV atan atan
+let atan2Op argsV = binOp "Atan2" argsV fail fail fail fail fail fail fail fail atan2 atan2 fail
+let ceilOp argsV = unOp "Ceil" argsV ceil ceil
+let expOp argsV = unOp "Exp" argsV exp exp
+let floorOp argsV = unOp "Floor" argsV floor floor
+let truncateOp argsV = unOp "Truncate" argsV truncate truncate
+let roundOp argsV = unOp "Round" argsV round round
+let signOp argsV = unOp "Sign" argsV sign sign
+let logOp argsV = unOp "Log" argsV log log
+let log10Op argsV = unOp "Log10" argsV log10 log10
+let sqrtOp argsV = unOp "Sqrt" argsV sqrt sqrt
+let cosOp argsV = unOp "Cos" argsV cos cos
+let coshOp argsV = unOp "Cosh" argsV cosh cosh
+let sinOp argsV = unOp "Sin" argsV sin sin
+let sinhOp argsV = unOp "Sinh" argsV sinh sinh
+let tanOp argsV = unOp "Tan" argsV tan tan
+let tanhOp argsV = unOp "Tanh" argsV tanh tanh
+//let pownOp argsV = unOp "Pown" argsV pown pown
+let powOp argsV = binOp "Pow" argsV fail fail fail fail fail fail fail fail ( ** ) ( ** ) fail
 
 /// Record a stack of ranges in an exception
 type System.Exception with 
@@ -1520,15 +1554,15 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | RPrim_char -> Value (Convert.ToChar argsV.[0])
         | RPrim_neg -> negOp "op_UnaryNegation" argsV
         | RPrim_pos -> Value argsV.[0]
-        | RPrim_minus -> binOp "op_Subtraction" argsV (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-)
-        | RPrim_divide -> binOp "op_Division" argsV (/) (/) (/) (/) (/) (/) (/) (/) (/) (/) (/)
-        | RPrim_mod -> binOp "op_Modulus" argsV (%) (%) (%) (%) (%) (%) (%) (%) (%) (%) (%)
-        | RPrim_shiftleft -> shiftOp "op_LeftShift" argsV (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<) (<<<)
-        | RPrim_shiftright -> shiftOp "op_RightShift" argsV (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>) (>>>)
-        | RPrim_land -> logicBinOp "op_BitwiseAnd" argsV (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&)
-        | RPrim_lor -> logicBinOp "op_BitwiseOr" argsV (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||)
-        | RPrim_lxor -> logicBinOp "op_ExclusiveOr" argsV (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^)
-        | RPrim_lneg -> logicUnOp "op_LogicalNot" argsV (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
+        | RPrim_minus -> minusOp argsV
+        | RPrim_divide -> divideOp argsV
+        | RPrim_mod -> modOp argsV
+        | RPrim_shiftleft -> shiftleftOp argsV
+        | RPrim_shiftright -> shiftrightOp argsV
+        | RPrim_land -> landOp argsV
+        | RPrim_lor -> lorOp argsV
+        | RPrim_lxor -> lxorOp argsV
+        | RPrim_lneg -> lnegOp argsV
         | RPrim_checked_int32 -> Value (Convert.ToInt32 argsV.[0])
         | RPrim_checked_int -> Value (Convert.ToInt32 argsV.[0])
         | RPrim_checked_int16 -> Value (Convert.ToInt16 argsV.[0])
@@ -1540,30 +1574,30 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         //| RPrim_checked_unativeint -> Value (Convert.ToUIntPtr argsV.[0])
         //| RPrim_checked_nativeint -> Value (Convert.ToIntPtr argsV.[0])
         | RPrim_checked_char -> Value (Convert.ToChar argsV.[0])
-        | RPrim_checked_minus -> binOp "op_Subtraction" argsV Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-) Checked.(-)
-        | RPrim_checked_mul -> binOp "op_Multiply" argsV Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*) Checked.(*)
-        | RPrim_abs -> unOp "Abs" argsV abs abs
-        | RPrim_acos -> unOp "Acos" argsV acos acos
-        | RPrim_asin -> unOp "Asin" argsV asin asin
-        | RPrim_atan -> unOp "Atan" argsV atan atan
-        | RPrim_atan2 -> binOp "Atan2" argsV fail fail fail fail fail fail fail fail atan2 atan2 fail
-        | RPrim_ceil -> unOp "Ceil" argsV ceil ceil
-        | RPrim_exp -> unOp "Exp" argsV exp exp
-        | RPrim_floor -> unOp "Floor" argsV floor floor
-        | RPrim_truncate -> unOp "Truncate" argsV truncate truncate
-        | RPrim_round -> unOp "Round" argsV round round
-        | RPrim_sign -> unOp "Sign" argsV sign sign
-        | RPrim_log -> unOp "Log" argsV log log
-        | RPrim_log10 -> unOp "Log10" argsV log10 log10
-        | RPrim_sqrt -> unOp "Sqrt" argsV sqrt sqrt
-        | RPrim_cos -> unOp "Cos" argsV cos cos
-        | RPrim_cosh -> unOp "Cosh" argsV cosh cosh
-        | RPrim_sin -> unOp "Sin" argsV sin sin
-        | RPrim_sinh -> unOp "Sinh" argsV sinh sinh
-        | RPrim_tan -> unOp "Tan" argsV tan tan
-        | RPrim_tanh -> unOp "Tanh" argsV tanh tanh
+        | RPrim_checked_minus -> checked_minusOp argsV
+        | RPrim_checked_mul -> checked_mulOp argsV
+        | RPrim_abs -> absOp argsV
+        | RPrim_acos -> acosOp argsV
+        | RPrim_asin -> asinOp argsV
+        | RPrim_atan -> atanOp argsV
+        | RPrim_atan2 -> atan2Op argsV
+        | RPrim_ceil -> ceilOp argsV
+        | RPrim_exp -> expOp argsV
+        | RPrim_floor -> floorOp argsV
+        | RPrim_truncate -> truncateOp argsV
+        | RPrim_round -> roundOp argsV
+        | RPrim_sign -> signOp argsV
+        | RPrim_log -> logOp argsV
+        | RPrim_log10 -> log10Op argsV
+        | RPrim_sqrt -> sqrtOp argsV
+        | RPrim_cos -> cosOp argsV
+        | RPrim_cosh -> coshOp argsV
+        | RPrim_sin -> sinOp argsV
+        | RPrim_sinh -> sinhOp argsV
+        | RPrim_tan -> tanOp argsV
+        | RPrim_tanh -> tanhOp argsV
         //| RPrim_pown -> unOp "Pown" argsV pown pown
-        | RPrim_pow -> binOp "Pow" argsV fail fail fail fail fail fail fail fail ( ** ) ( ** ) fail
+        | RPrim_pow -> powOp argsV
         | _ ->
 
         let typeArgs1R = resolveTypes (env, typeArgs1)

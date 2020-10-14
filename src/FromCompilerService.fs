@@ -459,7 +459,7 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
                    yield DDeclEntity (eR, declsR) 
 
            | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(v, vs, e) -> 
-               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName = "LiveCheckAttribute")
+               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName.Contains "CheckAttribute")
                if isLiveCheck then 
                    printfn "member %s is a LiveCheck!" v.LogicalName
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods

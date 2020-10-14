@@ -177,7 +177,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
             | REntity (targetType, _) -> 
                 let liveShape = 
                     targetType.GetCustomAttributes(true) |> Array.tryFind (fun a -> 
-                        a.GetType().Name = "LiveCheckAttribute")
+                        a.GetType().Name.Contains "CheckAttribute")
                 match liveShape with
                 | None  -> [| |]
                 | Some attr -> 

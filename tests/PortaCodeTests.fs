@@ -250,6 +250,53 @@ module SmokeTestLiveCheck =
 
 [<TestCase(true)>]
 [<TestCase(false)>]
+let SmokeTestShapeCheck (dyntypes: bool) =
+    SimpleTestCase true dyntypes "SmokeTestShapeCheck" """
+module SmokeTestShapeCheck = 
+    type ShapeCheckAttribute() = 
+        inherit System.Attribute()
+    
+    let mutable v = 0
+    
+    let x1 = 
+        v <- v + 1
+        4 
+
+    [<ShapeCheck>]
+    let x2 = 
+        v <- v + 1
+        4 
+
+    [<ShapeCheck>]
+    let x3 = 
+        // For live checking, bindings are executed on-demand
+        // 'v' is only incremented once - because `x1` is not yet evaluated!
+        if v <> 1 then failwithf "no way John, v = %d" v
+
+        let y1 = x2 + 3
+        
+        // 'v' has not been incremented again - because `x2` is evaluated once!
+        if v <> 1 then failwithf "no way Jane, v = %d" v
+        if y1 <> 7 then failwithf "no way Juan, y1 = %d" y1
+
+        let y2 = x1 + 1
+
+        // 'v' has been incremented - because `x1` is now evaluated!
+        if v <> 2 then failwithf "no way Julie, v = %d" v
+        if y2 <> 5 then failwithf "no way Jose, y2 = %d, v = %d" y2 v
+
+        let y3 = x1 + 1
+
+        // 'v' is not incremented again - because `x1` is already evaluated!
+        if v <> 2 then failwithf "no way Julie, v = %d" v
+        if y3 <> 5 then failwithf "no way Jose, y3 = %d, v = %d" y3 v
+
+        5 
+
+    let x4 : int = failwith "no way"
+        """
+[<TestCase(true)>]
+[<TestCase(false)>]
 let PlusOperator (dyntypes: bool) =
     SimpleTestCase false dyntypes "PlusOperator" """
 module PlusOperator = 
@@ -800,6 +847,18 @@ let c = C(3,4)
 if c.X <> 3 then failwith "fail fail! 1" 
 if c.Y <> 4 then failwith "fail fail! 2" 
 if c.XY <> 7 then failwith "fail fail! 3" 
+        """
+
+[<TestCase(true) >]
+[<TestCase(false)>]
+let SimpleModule(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleClass" """
+
+module M =
+    let f x y = printfn "hello"; printfn "hello"; printfn "hello"; printfn "hello"; x + y
+
+let c = M.f 3 4
+if c <> 7 then failwith "fail fail! 1" 
         """
 
 [<TestCase(true) >]
