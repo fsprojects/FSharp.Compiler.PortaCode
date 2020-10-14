@@ -199,7 +199,13 @@ let WilFailTraitCallInvoke (traitName, sourceTypeR: Type, isInstance) =
     let meths = sourceTypeR.GetMethods(bindingFlags) |> Array.filter (fun n -> n.Name = traitName) 
     meths.Length = 0 
 
-let EvalTraitCallInvoke (traitName, sourceTypeR: Type, isInstance, argExprsV: obj[]) =
+let EvalTraitCallInvoke (traitName, sourceTypeRs: Type list, isInstance, argExprsV: obj[]) =
+    let sourceTypeR =
+        match sourceTypeRs with 
+        | [t] -> t
+        | [t1;t2] -> if WilFailTraitCallInvoke (traitName, t1, isInstance) then t2 else t1
+        | _ -> failwith "unexpected"
+
     let objV = if isInstance then argExprsV.[0] else null
     let argsV = if isInstance then argExprsV.[1..] else argExprsV
     let bindingFlags =
@@ -216,46 +222,46 @@ let inline unOp op (argsV: obj[]) f32 f64 =
     match argsV.[0] with 
     | (:? double as v1) -> Value (box (f64 v1))
     | (:? single as v1) -> Value (box (f32 v1))
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType()], false, argsV)
 
 let inline binOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 d = 
-    match argsV.[0], argsV.[1] with
-    | (:? int32 as v1), (:? int32 as v2) -> Value (box (i32 v1 v2 : int32))
-    | (:? double as v1), (:? double as v2) -> Value (box (f64 v1 v2 : double))
-    | (:? single as v1), (:? single as v2) -> Value (box (f32 v1 v2 : float32))
-    | (:? int64 as v1), (:? int64 as v2) -> Value (box (i64 v1 v2 : int64))
-    | (:? int16 as v1), (:? int16 as v2) -> Value (box (i16 v1 v2 : int16))
-    | (:? sbyte as v1), (:? sbyte as v2) -> Value (box (i8 v1 v2 : sbyte))
-    | (:? uint32 as v1), (:? uint32 as v2) -> Value (box (u32 v1 v2 : uint32))
-    | (:? uint64 as v1), (:? uint64 as v2) -> Value (box (u64 v1 v2 : uint64))
-    | (:? uint16 as v1), (:? uint16 as v2) -> Value (box (u16 v1 v2 : uint16))
-    | (:? byte as v1), (:? byte as v2) -> Value (box (u8 v1 v2 : byte))
-    | (:? decimal as v1), (:? decimal as v2) -> Value (box (d v1 v2 : decimal))
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    match argsV.[0], argsV.[1] with 
+    | (:? int32 as v1), (:? int32 as v2) -> Value (box (i32 v1 v2))
+    | (:? double as v1), (:? double as v2) -> Value (box (f64 v1 v2))
+    | (:? single as v1), (:? single as v2) -> Value (box (f32 v1 v2))
+    | (:? int64 as v1), (:? int64 as v2) -> Value (box (i64 v1 v2))
+    | (:? int16 as v1), (:? int16 as v2) -> Value (box (i16 v1 v2))
+    | (:? sbyte as v1), (:? sbyte as v2) -> Value (box (i8 v1 v2))
+    | (:? uint32 as v1), (:? uint32 as v2) -> Value (box (u32 v1 v2))
+    | (:? uint64 as v1), (:? uint64 as v2) -> Value (box (u64 v1 v2))
+    | (:? uint16 as v1), (:? uint16 as v2) -> Value (box (u16 v1 v2))
+    | (:? byte as v1), (:? byte as v2) -> Value (box (u8 v1 v2))
+    | (:? decimal as v1), (:? decimal as v2) -> Value (box (d v1 v2))
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType();argsV.[1].GetType()], false, argsV)
 
 let inline shiftOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
-    match argsV.[0] with 
-    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2: int32)) | _ -> failwith "type match: operator"
-    | (:? int64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i64 v1 v2: int64)) | _ -> failwith "type match: operator"
-    | (:? int16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i16 v1 v2: int16)) | _ -> failwith "type match: operator"
-    | (:? sbyte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i8 v1 v2: sbyte)) | _ -> failwith "type match: operator"
-    | (:? uint32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u32 v1 v2: uint32)) | _ -> failwith "type match: operator"
-    | (:? uint64 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u64 v1 v2: uint64)) | _ -> failwith "type match: operator"
-    | (:? uint16 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u16 v1 v2: uint16)) | _ -> failwith "type match: operator"
-    | (:? byte as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (u8 v1 v2: byte)) | _ -> failwith "type match: operator"
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    match argsV.[0], argsV.[1] with 
+    | (:? int32 as v1), (:? int32 as v2) -> Value (box (i32 v1 v2))
+    | (:? int64 as v1), (:? int32 as v2) -> Value (box (i64 v1 v2))
+    | (:? int16 as v1), (:? int32 as v2) -> Value (box (i16 v1 v2))
+    | (:? sbyte as v1), (:? int32 as v2) -> Value (box (i8 v1 v2))
+    | (:? uint32 as v1), (:? int32 as v2) -> Value (box (u32 v1 v2))
+    | (:? uint64 as v1), (:? int32 as v2) -> Value (box (u64 v1 v2))
+    | (:? uint16 as v1), (:? int32 as v2) -> Value (box (u16 v1 v2))
+    | (:? byte as v1), (:? int32 as v2) -> Value (box (u8 v1 v2))
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType();argsV.[1].GetType()], false, argsV)
 
 let inline logicBinOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
-    match argsV.[0] with 
-    | (:? int32 as v1) -> match argsV.[1] with (:? int32 as v2) -> Value (box (i32 v1 v2: int32)) | _ -> failwith "type match: operator"
-    | (:? int64 as v1) -> match argsV.[1] with (:? int64 as v2) -> Value (box (i64 v1 v2: int64)) | _ -> failwith "type match: operator"
-    | (:? int16 as v1) -> match argsV.[1] with (:? int16 as v2) -> Value (box (i16 v1 v2: int16)) | _ -> failwith "type match: operator"
-    | (:? sbyte as v1) -> match argsV.[1] with (:? sbyte as v2) -> Value (box (i8 v1 v2: sbyte)) | _ -> failwith "type match: operator"
-    | (:? uint32 as v1) -> match argsV.[1] with (:? uint32 as v2) -> Value (box (u32 v1 v2: uint32)) | _ -> failwith "type match: operator"
-    | (:? uint64 as v1) -> match argsV.[1] with (:? uint64 as v2) -> Value (box (u64 v1 v2: uint64)) | _ -> failwith "type match: operator"
-    | (:? uint16 as v1) -> match argsV.[1] with (:? uint16 as v2) -> Value (box (u16 v1 v2: uint16)) | _ -> failwith "type match: operator"
-    | (:? byte as v1) -> match argsV.[1] with (:? byte as v2) -> Value (box (u8 v1 v2: byte)) | _ -> failwith "type match: operator"
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    match argsV.[0], argsV.[1] with 
+    | (:? int32 as v1), (:? int32 as v2) -> Value (box (i32 v1 v2))
+    | (:? int64 as v1), (:? int64 as v2) -> Value (box (i64 v1 v2))
+    | (:? int16 as v1), (:? int16 as v2) -> Value (box (i16 v1 v2))
+    | (:? sbyte as v1), (:? sbyte as v2) -> Value (box (i8 v1 v2))
+    | (:? uint32 as v1), (:? uint32 as v2) -> Value (box (u32 v1 v2))
+    | (:? uint64 as v1), (:? uint64 as v2) -> Value (box (u64 v1 v2))
+    | (:? uint16 as v1), (:? uint16 as v2) -> Value (box (u16 v1 v2))
+    | (:? byte as v1), (:? byte as v2) -> Value (box (u8 v1 v2))
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType();argsV.[1].GetType()], false, argsV)
 
 let inline logicUnOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 = 
     match argsV.[0] with 
@@ -267,7 +273,7 @@ let inline logicUnOp op (argsV: obj[]) i8 i16 i32 i64 u8 u16 u32 u64 =
     | (:? uint64 as v1) -> Value (box (u64 v1))
     | (:? uint16 as v1) -> Value (box (u16 v1))
     | (:? byte as v1) -> Value (box (u8 v1))
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType()], false, argsV)
 
 let negOp op (argsV: obj[]) = 
     match argsV.[0] with 
@@ -278,7 +284,7 @@ let negOp op (argsV: obj[]) =
     | (:? int16 as v1) -> Value (box (-v1))
     | (:? sbyte as v1) -> Value (box (-v1))
     | (:? decimal as v1) -> Value (box (-v1))
-    | _ -> EvalTraitCallInvoke(op, argsV.[0].GetType(), false, argsV)
+    | _ -> EvalTraitCallInvoke(op, [argsV.[0].GetType()], false, argsV)
 
 let minusOp argsV = binOp "op_Subtraction" argsV (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-)
 let divideOp argsV = binOp "op_Division" argsV (/) (/) (/) (/) (/) (/) (/) (/) (/) (/) (/)
@@ -933,7 +939,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         shellTypeConstructorBuilders.[membRef] <- (cB, paramTypesT)
                     else
 
-                        let cconv = CallingConventions.HasThis
+                        let cconv = (if membDef.IsInstance then CallingConventions.HasThis else CallingConventions.Standard)
                         let isIntfSlot = 
                             membDef.ImplementedSlots |> Array.exists (fun slot -> 
                                 let (RTypeErased env slotDeclType) = resolveType (env, slot.DeclaringType)
@@ -955,6 +961,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                             else
                                 MethodAttributes.Public
                                 ||| MethodAttributes.HideBySig
+                                ||| (if membDef.IsInstance then enum 0 else MethodAttributes.Static)
 
                         let mB = typB.DefineMethod(membDef.Name, attrs, cconv, returnTypeT, paramTypesT)
 
@@ -1438,14 +1445,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let argExprsV : obj[] = ctxt.EvalExprs (env, argExprs)
         match sourceTypesR with 
         | [| sourceTypeR |] -> 
-            EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
-        | [| sourceTypeR; sourceTypeR2 |] 
-              when sourceTypeR.Equals(sourceTypeR2) ||
-                   WilFailTraitCallInvoke (traitName, sourceTypeR2, isInstance) -> 
-            EvalTraitCallInvoke(traitName, sourceTypeR, isInstance, argExprsV)
-        | [| sourceTypeR; sourceTypeR2 |] 
-              when WilFailTraitCallInvoke (traitName, sourceTypeR, isInstance) -> 
-            EvalTraitCallInvoke(traitName, sourceTypeR2, isInstance, argExprsV)
+            EvalTraitCallInvoke(traitName, [sourceTypeR], isInstance, argExprsV)
+        | [| sourceTypeR; sourceTypeR2 |] ->
+            EvalTraitCallInvoke(traitName, [sourceTypeR; sourceTypeR2], isInstance, argExprsV)
         | _ -> failwithf "trait/operator call on '%s' NYI in interpreter - multiple different source types with ambiguity" traitName
 
     member ctxt.EvalExprs(env, argExprs) =
