@@ -91,7 +91,7 @@ and ResolvedUnionCase =
     | UUnionCase of int * string
 
 and ResolvedField = 
-    | RField of MemberInfo
+    | RField of MemberInfo * DFieldDef option
     | UField of int * ResolvedType * DFieldDef
 
 and Value = 
@@ -137,8 +137,11 @@ type Sink =
     /// Called whenever a value in a module is computed
     abstract NotifyBindValue: DMemberDef * Value -> unit
 
-    /// Called whenever a class field is set
-    abstract NotifyBindField : DType * DFieldDef * Value -> unit
+    /// Called whenever a class or record field is set
+    abstract NotifySetField : DType * DFieldDef * Value -> unit
+
+    /// Called whenever a class or record field is set
+    abstract NotifyGetField : DType * DFieldDef * DRange option * Value -> unit
 
     /// Called whenever a parameter or expression local is bound or a local is computed
     abstract NotifyBindLocal : DLocalDef * Value -> unit
@@ -151,7 +154,8 @@ let emptySink =
           member _.NotifyEstablishEntityDecl(_,_,_) = [| |]
           member _.NotifyCallAndReturn(_,_,_,_,_,_) = ()
           member _.NotifyBindValue(_,_) = ()
-          member _.NotifyBindField(_, _,_) = ()
+          member _.NotifySetField(_, _,_) = ()
+          member _.NotifyGetField(_, _,_,_) = ()
           member _.NotifyBindLocal(_,_) = ()
           member _.NotifyUseLocal(_,_) = () }
 
@@ -364,6 +368,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
     let sink = defaultArg sink emptySink
     let entityResolutions = ConcurrentDictionary<DEntityRef,ResolvedEntity>(HashIdentity.Structural)
     let methodThunks = ConcurrentDictionary<(ResolvedEntity * string * ResolvedTypes),(DMemberDef * Value)>(HashIdentity.Structural)
+    let fieldDefMap = ConcurrentDictionary<(string * string), DFieldDef>(HashIdentity.Structural)
     
     // For emitting shell types
     let mutable shellTypeThunkCount = 0
@@ -591,12 +596,19 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
         match classOrRecordTypeR with 
         | RType classOrRecordTypeV -> 
+            let fdefOption = 
+                match classOrRecordType with 
+                | DNamedType((DEntityRef nm as n), _argTypes) -> 
+                    match fieldDefMap.TryGetValue((nm, fieldName)) with 
+                    | false, _ -> None
+                    | true, res -> Some res
+                | _ -> None
             match classOrRecordTypeV.GetField(fieldName, bindAll) with 
             | null -> 
                 match classOrRecordTypeV.GetProperty(fieldName, bindAll) with 
-                | null -> failwithf "couldn't find field %s in type %A" fieldName classOrRecordType
-                | pinfo -> RField pinfo
-            | finfo -> RField finfo
+                | null -> failwithf "couldn't find field or property %s in type %A" fieldName classOrRecordType
+                | pinfo -> RField (pinfo, fdefOption)
+            | finfo -> RField (finfo, fdefOption)
         | UNamedType (typeDef, _) as ty -> 
             match typeDef.DeclaredFields |> Array.tryFind (fun x -> x.Name = fieldName) with
             | None -> failwithf "couldn't resolve field '%s'" fieldName
@@ -609,7 +621,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         match fieldTypeR with 
         | RType classOrRecordTypeV -> 
             let field = classOrRecordTypeV.GetField(fieldName, bindAll)
-            RField field
+            RField (field, None)
         | _ty -> 
             failwithf "unexpected resolve of ILField %s in interpreted type %A" fieldName fieldType
 
@@ -912,6 +924,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         let (RTypeErased env ft) = resolveType (env, f.FieldType) 
                         let attrs = (FieldAttributes.Public |||  (if f.IsStatic then FieldAttributes.Static else enum 0))
                         typB.DefineField(f.Name, ft, attrs) |> ignore
+                        // Record the DFieldDef so we can report get/sets of it to the sink
+                        fieldDefMap.[(entityDef.QualifiedName, f.Name)] <- f
 
                     //// Inject the compilation of the union type
                     //if entityDef.IsUnion then
@@ -1293,10 +1307,10 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | DExpr.NewUnionCase(unionType, unionCase, argExprs, range) -> 
             ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs, range)
 
-        | DExpr.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
-            ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo)
+        | DExpr.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo, range) -> 
+            ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo, range)
 
-        | DExpr.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> 
+        | DExpr.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr, _range) -> 
             ctxt.EvalFieldSet(env, objExprOpt, recordOrClassType, fieldInfo, argExpr)
 
         | DExpr.ILFieldGet(objExprOpt, fieldType, fieldName) -> 
@@ -1650,31 +1664,44 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | _ -> 
             failwithf "unexpected member %A at types %A %A" methR typeArgs1R typeArgs2R
 
-    member ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo) =
+    member ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo, m) =
         let objOptV = ctxt.EvalExprOpt(env, objExprOpt)
         let fieldR = resolveField (env, recordOrClassType, fieldInfo)
 
         match fieldR with 
-        | RField (:? FieldInfo as finfo) -> finfo.GetValue(objOptV) |> Value
-        | RField (:? PropertyInfo as pinfo) -> pinfo.GetValue(objOptV) |> Value
+        | RField ((:? FieldInfo as finfo), fdefOpt) ->
+            let value = finfo.GetValue(objOptV) |> Value
+            match fdefOpt with 
+            | Some fdef -> sink.NotifyGetField(recordOrClassType, fdef, m, value)
+            | _ -> ()
+            value
+        | RField ((:? PropertyInfo as pinfo), fdefOpt) ->
+            let value = pinfo.GetValue(objOptV) |> Value
+            match fdefOpt with 
+            | Some fdef -> sink.NotifyGetField(recordOrClassType, fdef, m, value)
+            | _ -> ()
+            value
         | RField _ -> failwith "unexpected field resolution"
-        | UField (i, _ty, fld) ->
-            match objOptV with 
+        | UField (i, _ty, fdef) ->
+            let value = 
+                match objOptV with 
 
-            | :? RecordValue as recdV -> 
-                let (RecordValue argsV) = recdV 
-                argsV.[i] |> Value
+                | :? RecordValue as recdV -> 
+                    let (RecordValue argsV) = recdV 
+                    argsV.[i] |> Value
 
-            | null -> 
-                //System.Runtime.Serialization.FormatterServices.GetUninitializedObject(ty) 
-                // TODO: for struct records this should return the default value
-                raise (NullReferenceException("EvalFieldGet: The object was null"))
+                | null -> 
+                    //System.Runtime.Serialization.FormatterServices.GetUninitializedObject(ty) 
+                    // TODO: for struct records this should return the default value
+                    raise (NullReferenceException("EvalFieldGet: The object was null"))
 
-            | objV -> 
-                let fields = getFields objV
-                match fields.Fields.TryGetValue fld.Name with
-                | true, v -> v |> Value
-                | _ -> failwithf "field not found: %s" fld.Name
+                | objV -> 
+                    let fields = getFields objV
+                    match fields.Fields.TryGetValue fdef.Name with
+                    | true, v -> v |> Value
+                    | _ -> failwithf "field not found: %s" fdef.Name
+            sink.NotifyGetField(recordOrClassType, fdef, m, value)
+            value
 
     // Note: FieldSet is used even for immutable fields in the case of the compiled form of F# constructors
     member ctxt.EvalFieldSet(env, objExprOpt, recordOrClassType, fieldInfo, argExpr) =
@@ -1684,11 +1711,19 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
         let argExprV = argExprE |> getVal
         match fieldR with 
-        | RField (:? FieldInfo as finfo) -> finfo.SetValue(objOptV, argExprV)
-        | RField (:? PropertyInfo as pinfo) -> pinfo.SetValue(objOptV, argExprV)
+        | RField ((:? FieldInfo as finfo), fdefOpt) ->
+            match fdefOpt with 
+            | Some fdef -> sink.NotifySetField(recordOrClassType, fdef, argExprE)
+            | _ -> ()
+            finfo.SetValue(objOptV, argExprV)
+        | RField ((:? PropertyInfo as pinfo), fdefOpt) -> 
+            match fdefOpt with 
+            | Some fdef -> sink.NotifySetField(recordOrClassType, fdef, argExprE)
+            | _ -> ()
+            pinfo.SetValue(objOptV, argExprV)
         | RField _ -> failwith "unexpected field resolution"
         | UField (i, ty, fld) ->
-            sink.NotifyBindField(recordOrClassType, fld, argExprE)
+            sink.NotifySetField(recordOrClassType, fld, argExprE)
             match objOptV with 
 
             | :? RecordValue as recdV -> 
@@ -1710,8 +1745,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let fieldR = resolveILField (env, recordOrClassType, fieldInfo)
 
         match fieldR with 
-        | RField (:? FieldInfo as finfo) -> finfo.GetValue(objOptV) |> Value
-        | RField (:? PropertyInfo as pinfo) -> pinfo.GetValue(objOptV) |> Value
+        | RField ((:? FieldInfo as finfo), _) -> finfo.GetValue(objOptV) |> Value
+        | RField ((:? PropertyInfo as pinfo), _) -> pinfo.GetValue(objOptV) |> Value
         | RField _ -> failwith "unexpected field resolution"
         | UField (_i, _ty, fld) -> failwithf "unexpected ILFieldGet %s in interpreted type %A" fld.Name recordOrClassType
 
@@ -1864,8 +1899,8 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             match unionCaseR with 
             | RUnionCase _ -> 
                 match unionCaseFieldR with 
-                | RField (:? FieldInfo as finfo) -> finfo.GetValue(unionV)
-                | RField (:? PropertyInfo as pinfo) -> pinfo.GetValue(unionV)
+                | RField ((:? FieldInfo as finfo), _) -> finfo.GetValue(unionV)
+                | RField ((:? PropertyInfo as pinfo), _) -> pinfo.GetValue(unionV)
                 | _ -> failwithf "unexpected field resolution %A in EvalUnionCaseGet" unionCaseFieldR
             | UUnionCase (_tag, _unionCaseName) -> 
                 match unionV with 

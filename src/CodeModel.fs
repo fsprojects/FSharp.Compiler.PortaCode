@@ -47,8 +47,8 @@ type DExpr =
     | Let of (DLocalDef * DExpr) * DExpr 
     | NewRecord of DType * DExpr[] * DRange option
     | ObjectExpr of DType * DExpr * DObjectExprOverrideDef[] * (DType * DObjectExprOverrideDef[])[]
-    | FSharpFieldGet of  DExpr option * DType * DFieldRef 
-    | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr 
+    | FSharpFieldGet of  DExpr option * DType * DFieldRef * DRange option
+    | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr * DRange option
     | NewUnionCase of DType * DUnionCaseRef * DExpr[] * DRange option
     | UnionCaseGet of DExpr * DType * DUnionCaseRef * DFieldRef 
     | UnionCaseSet of DExpr * DType * DUnionCaseRef * DFieldRef  * DExpr

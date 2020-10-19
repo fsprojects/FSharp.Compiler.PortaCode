@@ -273,12 +273,19 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
                                  tooltips.Add(r, lines, true))
 
                      member __.NotifyBindValue(vdef, value) = 
+                         printfn "%A: vdef.Name = %s, vdef.IsCompilerGenerated = %b" vdef.Range vdef.Name vdef.IsCompilerGenerated
                          if not vdef.IsCompilerGenerated then 
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
-                     member __.NotifyBindField(typ, fdef, value) = 
-                         if not fdef.IsCompilerGenerated then 
-                             fdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                     member __.NotifySetField(typ, fdef, value) = 
+                         // Class fields for implicit constructors are reported as 'compiler generated'
+                         //if not fdef.IsCompilerGenerated then 
+                         fdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+
+                     member __.NotifyGetField(typ, fdef, m, value) = 
+                         // Class fields for implicit constructors are reported as 'compiler generated'
+                         //if not fdef.IsCompilerGenerated then 
+                         m |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
                      member __.NotifyBindLocal(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
