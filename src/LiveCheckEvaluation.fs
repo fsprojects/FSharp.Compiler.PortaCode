@@ -276,6 +276,10 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
                          if not vdef.IsCompilerGenerated then 
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
 
+                     member __.NotifyBindField(typ, fdef, value) = 
+                         if not fdef.IsCompilerGenerated then 
+                             fdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+
                      member __.NotifyBindLocal(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
                              vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
