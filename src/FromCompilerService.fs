@@ -14,7 +14,9 @@ module List =
 module Seq = 
     let mapToArray f arr = arr |> Array.ofSeq |> Array.map f
 
-type Convert(includeRanges: bool) = 
+exception IncompleteExpr 
+
+type Convert(includeRanges: bool, tolerateIncomplete: bool) = 
 
     let rec convExpr (expr:FSharpExpr) : DExpr = 
 
@@ -38,13 +40,18 @@ type Convert(includeRanges: bool) =
             let rangeR = convRange expr.Range
             DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs, rangeR)
 
+        // The F# Compiler Service inserts "raise 1" for expressions that don't check
+        | BasicPatterns.Call(_, memberOrFunc, _, _, [ BasicPatterns.Const((:? int as c), _) ]) 
+             when c = 1 && memberOrFunc.CompiledName = "Raise" -> 
+                raise IncompleteExpr
+
         | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
             let mrefR = convMemberRef memberOrFunc
             let typeArgs1R = convTypes typeArgs1
             let typeArgs2R = convTypes typeArgs2
             let argExprsR = convArgExprs memberOrFunc argExprs
-            let rangeR = convRange expr.Range
+            let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt @ argExprs) |> List.map (fun e -> e.Range)))
             match objExprOptR with 
             // FCS TODO: Fix quirk with extension members so this isn't needed
             | Some objExprR when memberOrFunc.IsExtensionMember || not memberOrFunc.IsInstanceMemberInCompiledCode  -> 
@@ -85,27 +92,31 @@ type Convert(includeRanges: bool) =
         | BasicPatterns.NewDelegate(delegateType, delegateBodyExpr) -> 
             DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
-        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs) -> 
-            let rangeR = convRange expr.Range
+        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs: FSharpExpr list) -> 
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs, rangeR)
 
         | BasicPatterns.NewRecord(recordType, argExprs) -> 
-            DExpr.NewRecord(convType recordType, convExprs argExprs)
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            DExpr.NewRecord(convType recordType, convExprs argExprs, rangeR)
 
         | BasicPatterns.NewTuple(tupleType, argExprs) -> 
             DExpr.NewTuple(convType tupleType, convExprs argExprs)
 
         | BasicPatterns.NewUnionCase(unionType, unionCase, argExprs) -> 
-            DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs)
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs, rangeR)
 
         | BasicPatterns.Quote(quotedExpr) -> 
             DExpr.Quote(convExpr quotedExpr)
 
         | BasicPatterns.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
-            DExpr.FSharpFieldGet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo)
+            let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt) |> List.map (fun e -> e.Range)))
+            DExpr.FSharpFieldGet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, rangeR)
 
         | BasicPatterns.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> 
-            DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr)
+            let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt @ [argExpr]) |> List.map (fun e -> e.Range)))
+            DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr, rangeR)
 
         | BasicPatterns.Sequential(firstExpr, secondExpr) -> 
             DExpr.Sequential(convExpr firstExpr, convExpr secondExpr)
@@ -181,6 +192,37 @@ type Convert(includeRanges: bool) =
     and convExprs exprs = 
         Array.map convExpr (Array.ofList exprs)
 
+    // Trim out the ranges of argument expressions
+    and trimRanges (rangesToRemove: range list) (range: range) =
+        // Optional arguments inserted by the F# compiler get ranges identical to 
+        // the whole expression.  Don't remove these 
+        //printfn "trimRanges --> "
+        let rangesToRemove = rangesToRemove |> List.filter (fun m -> not (m = range))
+        (range, rangesToRemove) ||> List.fold trimRange
+         
+    // Exclude range m2 from m
+    and trimRange (m1: range) (m2: range) =
+       let posLeq p1 p2 = not (posGt p1 p2)
+       let posGeq p1 p2 = not (posLt p1 p2)
+       let posMin p1 p2 = if posLt p1 p2 then p1 else p2
+       let posMax p1 p2 = if posLt p1 p2 then p2 else p1
+       let posPlusOne (p: pos) = mkPos p.Line (p.Column+1)
+       let posMinusOne (p: pos) = mkPos p.Line (max 0 (p.Column-1))
+       let p1, p2 = 
+          // Trim from start
+          if posLeq m2.Start m1.Start then 
+              posMax m1.Start (posPlusOne m2.End), m1.End
+          // Trim from end
+          elif posGeq m2.End m1.End then 
+              m1.Start, posMin m1.End (posMinusOne m2.Start)
+          // Trim from middle, treated as trim from end, this is an argument "x.foo(y)"
+          else
+              m1.Start, posMin m1.End (posMinusOne m2.Start)
+
+       let res = mkRange m1.FileName  p1 p2
+       //printfn "m1 = %A, m2 = %A, res = %A" m1 m2 res
+       res
+         
     and convExprOpt exprs = 
         Option.map convExpr exprs
 
@@ -361,6 +403,10 @@ type Convert(includeRanges: bool) =
         if typ.IsAbbreviation then stripTypeAbbreviations typ.AbbreviatedType 
         else typ
 
+    and isInterfaceType (typ: FSharpType) = 
+        if typ.IsAbbreviation then isInterfaceType typ.AbbreviatedType 
+        else typ.HasTypeDefinition && typ.TypeDefinition.IsInterface
+
     and convType (typ: FSharpType) = 
         if typ.IsAbbreviation then convType typ.AbbreviatedType 
         elif typ.IsFunctionType then DFunctionType (convType typ.GenericArguments.[0], convType typ.GenericArguments.[1])
@@ -370,8 +416,29 @@ type Convert(includeRanges: bool) =
         elif typ.TypeDefinition.IsArrayType then DArrayType (typ.TypeDefinition.ArrayRank, convType typ.GenericArguments.[0])
         elif typ.TypeDefinition.IsByRef then DByRefType (convType typ.GenericArguments.[0])
         else DNamedType (convEntityRef typ.TypeDefinition, convTypes typ.GenericArguments)
+
     and convTypes (typs: seq<FSharpType>) = typs |> Seq.toArray |> Array.map convType 
-    and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = { Name = gp.Name }
+
+    and convGenericParamDef (gp: FSharpGenericParameter) : DGenericParameterDef = 
+        { Name = gp.Name 
+          InterfaceConstraints = 
+             gp.Constraints 
+             |> Seq.toArray 
+             |> Array.choose (fun c -> 
+                  if c.IsCoercesToConstraint then 
+                      if isInterfaceType c.CoercesToTarget then Some (convType c.CoercesToTarget) else None 
+                  else None) 
+          BaseTypeConstraint = 
+              gp.Constraints 
+              |> Seq.tryPick (fun c -> 
+                  if c.IsCoercesToConstraint then
+                      if not (isInterfaceType c.CoercesToTarget) then Some (convType c.CoercesToTarget) 
+                      else None
+                  else None) 
+          DefaultConstructorConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsRequiresDefaultConstructorConstraint) 
+          ReferenceTypeConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsReferenceTypeConstraint) 
+          NotNullableValueTypeConstraint = gp.Constraints |> Seq.exists (fun c -> c.IsNonNullableValueTypeConstraint) 
+          }
     and convField (f: FSharpField) : DFieldDef = 
         { Name = f.Name 
           IsStatic = f.IsStatic
@@ -394,17 +461,31 @@ type Convert(includeRanges: bool) =
                    yield DDeclEntity (eR, declsR) 
 
            | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(v, vs, e) -> 
-               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName = "LiveCheckAttribute")
+               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName.Contains "CheckAttribute")
                if isLiveCheck then 
                    printfn "member %s is a LiveCheck!" v.LogicalName
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods
                //if v.IsValCompiledAsMethod || not v.IsMember then
                let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
-               let eR = try convExpr e with exn -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
-               yield DDeclMember (vR, eR, isLiveCheck)
+               let eR = try Ok (convExpr e) with exn -> Error exn
+               match eR with 
+               | Ok eR -> 
+                   yield DDeclMember (vR, eR, isLiveCheck)
+               | Error exn -> 
+                   match exn with 
+                   | IncompleteExpr when tolerateIncomplete -> () 
+                   | _ -> failwithf "error converting rhs of %s\n%A" v.CompiledName exn
 
            | FSharpImplementationFileDeclaration.InitAction(e) -> 
-               yield DDecl.InitAction (convExpr e, convRange e.Range) |]
+               let eR = try Ok (convExpr e) with exn -> Error exn
+               match eR with 
+               | Ok eR -> 
+                   yield DDecl.InitAction (eR, convRange e.Range)
+               | Error exn -> 
+                   match exn with 
+                   | IncompleteExpr when tolerateIncomplete -> () 
+                   | _ -> failwithf "error converting expression\n%A" exn
+        |]
 
     and convDecls decls = 
         decls |> Array.ofList |> Array.collect convDecl 

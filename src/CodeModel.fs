@@ -15,11 +15,12 @@ type DDiagnostic =
    { Severity: int
      Number: int
      Message: string
-     Stack: DRange list }
+     LocationStack: DRange[] }
 
+   member diag.Location = Array.last diag.LocationStack 
    override diag.ToString() = 
        let sev = match diag.Severity with 0 -> "info" | 1 -> "warning" | _ -> "error"
-       match List.rev diag.Stack with 
+       match List.ofArray (Array.rev diag.LocationStack) with 
        | [] -> 
            sprintf "%s LC%d: %O" sev diag.Number diag.Message
        | loc:: t -> 
@@ -44,11 +45,11 @@ type DExpr =
     | NewObject of DMemberRef * DType[] * DExpr[] * DRange option
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
-    | NewRecord of DType * DExpr[] 
+    | NewRecord of DType * DExpr[] * DRange option
     | ObjectExpr of DType * DExpr * DObjectExprOverrideDef[] * (DType * DObjectExprOverrideDef[])[]
-    | FSharpFieldGet of  DExpr option * DType * DFieldRef 
-    | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr 
-    | NewUnionCase of DType * DUnionCaseRef * DExpr[]  
+    | FSharpFieldGet of  DExpr option * DType * DFieldRef * DRange option
+    | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr * DRange option
+    | NewUnionCase of DType * DUnionCaseRef * DExpr[] * DRange option
     | UnionCaseGet of DExpr * DType * DUnionCaseRef * DFieldRef 
     | UnionCaseSet of DExpr * DType * DUnionCaseRef * DFieldRef  * DExpr
     | UnionCaseTag of DExpr * DType 
@@ -124,7 +125,13 @@ and DMemberDef =
           ReturnType = x.ReturnType }
 
 and DGenericParameterDef = 
-    { Name: string }
+    { Name: string
+      InterfaceConstraints: DType[] 
+      BaseTypeConstraint: DType option
+      DefaultConstructorConstraint: bool
+      NotNullableValueTypeConstraint: bool
+      ReferenceTypeConstraint: bool
+      }
 
 and DEntityDef = 
     { QualifiedName: string
