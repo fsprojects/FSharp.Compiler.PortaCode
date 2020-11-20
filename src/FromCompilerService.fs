@@ -100,6 +100,11 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewRecord(convType recordType, convExprs argExprs, rangeR)
 
+        | BasicPatterns.NewAnonRecord(recordType, argExprs) -> 
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
+            let fieldRefs = (stripTypeAbbreviations recordType).AnonRecordTypeDetails.SortedFieldNames |> Array.mapi (fun i nm -> DFieldRef (i, nm))
+            DExpr.NewAnonRecord(fieldRefs, convExprs argExprs, rangeR)
+
         | BasicPatterns.NewTuple(tupleType, argExprs) -> 
             DExpr.NewTuple(convType tupleType, convExprs argExprs)
 
@@ -141,6 +146,11 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
 
         | BasicPatterns.TypeTest(ty, inpExpr) -> 
             DExpr.TypeTest(convType ty, convExpr inpExpr)
+
+        | BasicPatterns.AnonRecordGet(objExpr, anonRecdType, n) -> 
+            let rangeR = expr.Range |> trimRanges [objExpr.Range] |> convRange
+            let fieldRef = DFieldRef (n, anonRecdType.AnonRecordTypeDetails.SortedFieldNames.[n])
+            DExpr.AnonRecordGet(convExpr objExpr, fieldRef, rangeR)
 
         | BasicPatterns.UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> 
             DExpr.UnionCaseSet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField, convExpr valueExpr)
@@ -407,6 +417,7 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
         elif typ.IsFunctionType then DFunctionType (convType typ.GenericArguments.[0], convType typ.GenericArguments.[1])
         elif typ.IsTupleType then DTupleType (false, convTypes typ.GenericArguments)
         elif typ.IsStructTupleType then DTupleType (true, convTypes typ.GenericArguments)
+        elif typ.IsAnonRecordType then DAnonRecdType (false, typ.AnonRecordTypeDetails.SortedFieldNames, convTypes typ.GenericArguments)
         elif typ.IsGenericParameter then DVariableType typ.GenericParameter.Name
         elif typ.TypeDefinition.IsArrayType then DArrayType (typ.TypeDefinition.ArrayRank, convType typ.GenericArguments.[0])
         elif typ.TypeDefinition.IsByRef then DByRefType (convType typ.GenericArguments.[0])

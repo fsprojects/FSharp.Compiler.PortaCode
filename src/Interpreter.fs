@@ -520,6 +520,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | DTupleType(isStruct, argTypes) -> 
             let (RTypesErased env tys) = resolveTypes (env, argTypes)
             RType (if isStruct then failwith "struct tuple NYI" (* FSharp.Reflection.FSharpType.MakeStructTupleType(Array.ofList tys) *) else FSharp.Reflection.FSharpType.MakeTupleType(tys))
+        | DAnonRecdType(_isStruct, _names, argTypes) -> 
+            //let (RTypesErased env tys) = resolveTypes (env, argTypes)
+            RType (typeof<obj>)
         | DVariableType v -> 
             match env.Types.TryGetValue v with 
             | true, res -> RType res
@@ -1304,11 +1307,17 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | DExpr.NewRecord(recordType, argExprs, range) -> 
             ctxt.EvalNewRecord(env, recordType, argExprs, range)
 
+        | DExpr.NewAnonRecord(fieldRefs, argExprs, range) -> 
+            ctxt.EvalNewAnonRecord(env, fieldRefs, argExprs, range)
+
         | DExpr.NewUnionCase(unionType, unionCase, argExprs, range) -> 
             ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs, range)
 
         | DExpr.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo, range) -> 
             ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo, range)
+
+        | DExpr.AnonRecordGet(objExpr, fieldRef, range) -> 
+            ctxt.EvalAnonRecordGet(env, objExpr, fieldRef, range)
 
         | DExpr.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr, _range) -> 
             ctxt.EvalFieldSet(env, objExprOpt, recordOrClassType, fieldInfo, argExpr)
@@ -1664,6 +1673,28 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | _ -> 
             failwithf "unexpected member %A at types %A %A" methR typeArgs1R typeArgs2R
 
+    member ctxt.EvalAnonRecordGet(env, objExpr, fieldInfo, m) =
+        let (DFieldRef(fieldIndex, fieldName)) = fieldInfo
+        let (Value objV) = ctxt.EvalExpr(env, objExpr)
+        let value = 
+            match objV with 
+            | :? RecordValue as recdV -> 
+                let (RecordValue argsV) = recdV 
+                argsV.[fieldIndex] |> Value
+
+            | null -> 
+                //System.Runtime.Serialization.FormatterServices.GetUninitializedObject(ty) 
+                // TODO: for struct records this should return the default value
+                raise (NullReferenceException("EvalFieldGet: The object was null"))
+
+            | objV -> 
+                let fields = getFields objV
+                match fields.Fields.TryGetValue fieldName with
+                | true, v -> v |> Value
+                | _ -> failwithf "field not found: %s" fieldName
+        //sink.NotifyGetField(recordOrClassType, fdef, m, value)
+        value
+
     member ctxt.EvalFieldGet(env, objExprOpt, recordOrClassType, fieldInfo, m) =
         let objOptV = ctxt.EvalExprOpt(env, objExprOpt)
         let fieldR = resolveField (env, recordOrClassType, fieldInfo)
@@ -1788,6 +1819,11 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         | _ -> 
             let recdV = RecordValue argsV
             Value recdV
+
+    member ctxt.EvalNewAnonRecord(env, fieldRefs, argExprs, _range) =
+        let argsV = ctxt.EvalExprs(env, argExprs)
+        let recdV = RecordValue argsV
+        Value recdV
 
     member ctxt.EvalNewUnionCase(env, unionType, unionCase, argExprs, _range) =
         let unionCaseR = resolveUnionCase (env, unionType, unionCase)

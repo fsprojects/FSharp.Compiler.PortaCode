@@ -46,7 +46,9 @@ type DExpr =
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
     | NewRecord of DType * DExpr[] * DRange option
+    | NewAnonRecord of DFieldRef[] * DExpr[] * DRange option
     | ObjectExpr of DType * DExpr * DObjectExprOverrideDef[] * (DType * DObjectExprOverrideDef[])[]
+    | AnonRecordGet of  DExpr * DFieldRef * DRange option
     | FSharpFieldGet of  DExpr option * DType * DFieldRef * DRange option
     | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr * DRange option
     | NewUnionCase of DType * DUnionCaseRef * DExpr[] * DRange option
@@ -80,6 +82,7 @@ and DType =
     | DNamedType of DEntityRef * DType[]
     | DFunctionType of DType * DType
     | DTupleType of bool * DType[]
+    | DAnonRecdType of bool * string[] * DType[]
     | DArrayType of int * DType
     | DByRefType of DType
     | DVariableType of string

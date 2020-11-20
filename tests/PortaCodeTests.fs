@@ -418,6 +418,21 @@ let f () =
 f()
 """
 
+
+[<TestCase(true)>]
+[<TestCase(false)>]
+let ArrayOfUserDefinedAnonRecordType(dyntypes: bool) =
+    SimpleTestCase false dyntypes "ArrayOfUserDefinedUnionRecordType" """
+
+let f () = 
+    let a = [| {| X = 1; Y = "a" |} |]
+    if a.Length <> 1 then failwith "unexpected"
+    if a.[0].X <> 1 then failwith "unexpected"
+    if a.[0].Y <> "a" then failwith "unexpected"
+
+f()
+"""
+
 [<TestCase(true)>]
 [<TestCase(false)>]
 let SetOfUserDefinedUnionType(dyntypes: bool) =
