@@ -777,7 +777,7 @@ if typeof<C>.Name <> "C" then failwith "bad name"
 let c = C()
 let v = c.CompareTo(c)
 
-//if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
+if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
         """
 
 [<TestCase(true)>]
