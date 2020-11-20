@@ -623,17 +623,17 @@ let TestLengthOnList(dyntypes: bool) =
 let x = [1;2;3].Length
 if x <> 3 then failwith "fail! fail!" 
         """
-// Known limitation of FSharp Compiler Service
-//[<Test>]
-//    let TestEvalLocalFunctionOnClass() =
-//    SimpleTestCase false dyntypes "TestEvalLocalFunctionOnClass" """
-//type C(x: int) = 
-//    let f x = x + 1
-//    member __.Y with get() = f x
+[<TestCase(true)>]
+[<TestCase(false)>]
+let TestEvalLocalFunctionOnClass(dyntypes: bool) =
+    SimpleTestCase false dyntypes "TestEvalLocalFunctionOnClass" """
+type C(x: int) = 
+    let f x = x + 1
+    member __.Y with get() = f x
 
-//let c = C(3)
-//if c.Y <> 4 then failwith "fail!" 
-//        """
+let c = C(3)
+if c.Y <> 4 then failwith "fail!" 
+        """
 
 [<TestCase(true)>]
 [<TestCase(false)>]
@@ -737,6 +737,48 @@ let v = (c :> IComparable).CompareTo(c)
 if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
         """
 
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleInterfaceDecl(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleInterfaceDecl" """
+
+type IComparable2 =
+    abstract CompareTo: obj -> int
+
+if typeof<IComparable2>.Name <> "IComparable2" then failwith "bad name"
+
+type C() =
+    interface IComparable2 with
+       member x.CompareTo(y:obj) = 17
+
+let c = C()
+let v = (c :> IComparable2).CompareTo(c)
+
+if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
+        """
+
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleAbstractClassDecl(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleAbstractClassDecl" """
+
+[<AbstractClass>]
+type Comparable2() =
+    abstract CompareTo: obj -> int
+
+if typeof<Comparable2>.Name <> "Comparable2" then failwith "bad name"
+
+type C() =
+    inherit Comparable2() 
+    override x.CompareTo(y:obj) = 17
+
+if typeof<C>.Name <> "C" then failwith "bad name"
+let c = C()
+let v = c.CompareTo(c)
+
+//if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
+        """
 
 [<TestCase(true)>]
 [<TestCase(false, Ignore= "fails without dynamic emit types")>]

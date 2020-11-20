@@ -124,7 +124,8 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr, rangeR)
 
         | BasicPatterns.Sequential(firstExpr, secondExpr) -> 
-            DExpr.Sequential(convExpr firstExpr, convExpr secondExpr)
+            let rangeR = convRange expr.Range
+            DExpr.Sequential(convExpr firstExpr, convExpr secondExpr, rangeR)
 
         | BasicPatterns.TryFinally(bodyExpr, finalizeExpr) -> 
             DExpr.TryFinally(convExpr bodyExpr, convExpr finalizeExpr)
@@ -389,6 +390,7 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
           BaseType = entity.BaseType |> Option.map convType
           DeclaredInterfaces = entity.DeclaredInterfaces |> Seq.toArray |> Array.map convType
           DeclaredFields = entity.FSharpFields |> Seq.toArray |> Array.map convField
+          DeclaredDispatchSlots = entity.MembersFunctionsAndValues |> Seq.toArray |> Array.filter (fun v -> v.IsDispatchSlot) |> Array.map convMemberDef
           GenericParameters = convGenericParamDefs entity.GenericParameters 
           UnionCases = entity.UnionCases |> Seq.mapToArray  (fun uc -> uc.Name) 
           IsUnion = entity.IsFSharpUnion

@@ -68,7 +68,7 @@ type DExpr =
     | DefaultValue of DType  
     | Const of obj * DType
     | AddressOf of DExpr 
-    | Sequential of DExpr * DExpr  
+    | Sequential of DExpr * DExpr  * DRange option
     | FastIntegerForLoop of DExpr * DExpr * DExpr * bool
     | WhileLoop of DExpr * DExpr  
     | TryFinally of DExpr * DExpr  
@@ -143,6 +143,7 @@ and DEntityDef =
       BaseType: DType option
       DeclaredInterfaces: DType[]
       DeclaredFields: DFieldDef[]
+      DeclaredDispatchSlots: DMemberDef[]
       IsUnion: bool
       IsRecord: bool
       IsStruct: bool
