@@ -846,7 +846,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
 
         let enterTypeDef (entityDef: DEntityDef) =
             let (TypeBuilderOrFail typB) = entityResolutions.[entityDef.Ref]
-            let env = (envEmpty, entityDef.GenericParameters, typB.GenericTypeParameters) |||> Array.fold2 bindType
+            let env = (envEmpty, entityDef.GenericParameters, (if typB.IsGenericTypeDefinition then typB.GetGenericArguments() else [| |])) |||> Array.fold2 bindType
             typB, env
 
         //printfn "defining generic parameters..."

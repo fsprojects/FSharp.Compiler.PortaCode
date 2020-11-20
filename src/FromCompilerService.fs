@@ -386,11 +386,6 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
           IsStruct = entity.IsValueType
           IsInterface = entity.IsInterface
           CustomAttributes = entity.Attributes |> Seq.toArray |> Array.map convCustomAttribute 
-          // TODO: allow abstract classes
-          // TODO: allow classes with abstract slot definitions
-          // TODO: allow interfaces with abstract slot definitions
-          //AbstractSlots = [| for v in Seq.toArray entity.TryGetMembersFunctionsAndValues do v.  |]
-          //IsAbstractClass = entity.
           Range = convRange entity.DeclarationLocation}
 
     and convEntityRef (entity: FSharpEntity) : DEntityRef = 
