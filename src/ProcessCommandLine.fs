@@ -177,6 +177,8 @@ let ProcessCommandLine (argv: string[]) =
             let parseResults, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, SourceText.ofString (readFile sourceFile), options) |> Async.RunSynchronously  
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
+                for e in parseResults.Errors do   
+                   printfn "Error: %A" e
                 failwith "unexpected aborted"
                 Result.Error (parseResults.ParseTree, None, None, None)
 

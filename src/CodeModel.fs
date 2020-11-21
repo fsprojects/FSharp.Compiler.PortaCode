@@ -46,7 +46,9 @@ type DExpr =
     | LetRec of ( DLocalDef * DExpr)[] * DExpr  
     | Let of (DLocalDef * DExpr) * DExpr 
     | NewRecord of DType * DExpr[] * DRange option
+    | NewAnonRecord of DFieldRef[] * DExpr[] * DRange option
     | ObjectExpr of DType * DExpr * DObjectExprOverrideDef[] * (DType * DObjectExprOverrideDef[])[]
+    | AnonRecordGet of  DExpr * DFieldRef * DRange option
     | FSharpFieldGet of  DExpr option * DType * DFieldRef * DRange option
     | FSharpFieldSet of  DExpr option * DType * DFieldRef * DExpr * DRange option
     | NewUnionCase of DType * DUnionCaseRef * DExpr[] * DRange option
@@ -66,7 +68,7 @@ type DExpr =
     | DefaultValue of DType  
     | Const of obj * DType
     | AddressOf of DExpr 
-    | Sequential of DExpr * DExpr  
+    | Sequential of DExpr * DExpr  * DRange option
     | FastIntegerForLoop of DExpr * DExpr * DExpr * bool
     | WhileLoop of DExpr * DExpr  
     | TryFinally of DExpr * DExpr  
@@ -80,6 +82,7 @@ and DType =
     | DNamedType of DEntityRef * DType[]
     | DFunctionType of DType * DType
     | DTupleType of bool * DType[]
+    | DAnonRecdType of bool * string[] * DType[]
     | DArrayType of int * DType
     | DByRefType of DType
     | DVariableType of string
@@ -140,6 +143,7 @@ and DEntityDef =
       BaseType: DType option
       DeclaredInterfaces: DType[]
       DeclaredFields: DFieldDef[]
+      DeclaredDispatchSlots: DMemberDef[]
       IsUnion: bool
       IsRecord: bool
       IsStruct: bool
