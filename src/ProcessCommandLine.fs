@@ -51,7 +51,7 @@ let ProcessCommandLine (argv: string[]) =
                     dyntypes <- true
                     livecheck <- true
                     writeinfo <- true
-                    useEditFiles <- true
+                    //useEditFiles <- true
                 elif arg = "--enablelivechecks" then 
                     livecheck <- true
                 elif arg = "--useeditfles" then 
@@ -292,10 +292,10 @@ let ProcessCommandLine (argv: string[]) =
         let mkWatcher (path, fileName) = 
             let watcher = new FileSystemWatcher(path, fileName)
             watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-            watcher.Changed.Add (changed "Changed" >> ignore)
-            watcher.Created.Add (changed "Created" >> ignore)
-            watcher.Deleted.Add (changed "Deleted" >> ignore)
-            watcher.Renamed.Add (changed "Renamed" >> ignore)
+            watcher.Changed.Add (changed (sprintf "Changed %s" fileName) >> ignore)
+            watcher.Created.Add (changed (sprintf "Created %s" fileName) >> ignore)
+            watcher.Deleted.Add (changed (sprintf "Deleted %s" fileName) >> ignore)
+            watcher.Renamed.Add (changed (sprintf "Renamed %s" fileName) >> ignore)
             watcher
 
         let watchers = 
