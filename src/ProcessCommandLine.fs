@@ -287,8 +287,7 @@ let ProcessCommandLine (argv: string[]) =
         // Send an immediate changed() event
         if webhook.IsNone then 
             printfn "Sending initial changes... " 
-            for sourceFile in options.SourceFiles do
-                changed "initial" () |> ignore
+            changed "initial" () |> ignore
 
         let mkWatcher (path, fileName) = 
             let watcher = new FileSystemWatcher(path, fileName)
