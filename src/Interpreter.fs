@@ -1639,7 +1639,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let valueThunks = recursiveBindings |> Array.map (fun _ -> { Value = null })
         let envInner = bindMany sink env (Array.map fst recursiveBindings) valueThunks
         (valueThunks, recursiveBindings) ||> Array.iter2 (fun valueThunk (recursiveBindingVar,recursiveBindingExpr) -> 
-            let v = ctxt.EvalExpr(envInner, recursiveBindingExpr)
+            let v = ctxt.EvalExpr(envInner, recursiveBindingExpr) |> getVal
             valueThunk.Value <- v)
         ctxt.EvalExpr (envInner, bodyExpr)
 
