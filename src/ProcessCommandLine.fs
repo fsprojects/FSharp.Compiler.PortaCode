@@ -243,9 +243,11 @@ let ProcessCommandLine (argv: string[]) =
         with err -> 
             printfn "fslive: ERROR SENDING TO WEBHOOK: %A" (err.ToString())
 
+    let mutable lastCompileStart = System.DateTime.Now
     let changed why _ =
         try 
-            printfn "fslive: CHANGE DETECTED (%s), COMPILING...." why
+            printfn "fslive: COMPILING (%s)...." why
+            lastCompileStart <- System.DateTime.Now
 
             match checkFiles options.SourceFiles with 
             | Result.Error res -> Result.Error res
@@ -261,7 +263,7 @@ let ProcessCommandLine (argv: string[]) =
             | None -> 
 
             if not dump && webhook.IsNone then 
-                printfn "fslive: CHANGE DETECTED, RE-EVALUATING ALL INPUTS...." 
+                printfn "fslive: EVALUATING ALL INPUTS...." 
                 let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
                 match evaluator.EvaluateDecls implFiles with
                 | Error _ when not watch -> exit 1
@@ -289,25 +291,31 @@ let ProcessCommandLine (argv: string[]) =
             printfn "Sending initial changes... " 
             changed "initial" () |> ignore
 
-        let mkWatcher (path, fileName) = 
+        let mkWatcher (sourceFile: string) = 
+            let path = Path.GetDirectoryName(sourceFile)
+            let fileName = Path.GetFileName(sourceFile)
+            printfn "fslive: WATCHING %s in %s" fileName path 
             let watcher = new FileSystemWatcher(path, fileName)
             watcher.NotifyFilter <- NotifyFilters.Attributes ||| NotifyFilters.CreationTime ||| NotifyFilters.FileName ||| NotifyFilters.LastAccess ||| NotifyFilters.LastWrite ||| NotifyFilters.Size ||| NotifyFilters.Security;
-            watcher.Changed.Add (changed (sprintf "Changed %s" fileName) >> ignore)
-            watcher.Created.Add (changed (sprintf "Created %s" fileName) >> ignore)
-            watcher.Deleted.Add (changed (sprintf "Deleted %s" fileName) >> ignore)
-            watcher.Renamed.Add (changed (sprintf "Renamed %s" fileName) >> ignore)
+
+            let fileChange msg e = 
+                let lastWriteTime = try max (File.GetCreationTime(sourceFile)) (File.GetLastWriteTime(sourceFile)) with _ -> DateTime.MaxValue
+                printfn "change %s, lastCOmpileStart=%A, lastWriteTime = %O"  sourceFile lastCompileStart lastWriteTime
+                if lastWriteTime > lastCompileStart then
+                    printfn "changed %s"  sourceFile 
+                    changed msg e |> ignore
+
+            watcher.Changed.Add (fileChange (sprintf "Changed %s" fileName))
+            watcher.Created.Add (fileChange (sprintf "Created %s" fileName))
+            watcher.Deleted.Add (fileChange (sprintf "Deleted %s" fileName))
+            watcher.Renamed.Add (fileChange (sprintf "Renamed %s" fileName))
             watcher
 
         let watchers = 
             [ for sourceFile in options.SourceFiles do
-                let path = Path.GetDirectoryName(sourceFile)
-                let fileName = Path.GetFileName(sourceFile)
-                printfn "fslive: WATCHING %s in %s" fileName path 
-                yield mkWatcher (path, fileName)
+                yield mkWatcher sourceFile
                 if useEditFiles then 
-                    let infoDir, editFile = editDirAndFile fileName
-                    printfn "fslive: WATCHING %s in %s" editFile infoDir 
-                    yield mkWatcher (infoDir, Path.GetFileName editFile) ]
+                    yield mkWatcher sourceFile ]
 
         for watcher in watchers do
             watcher.EnableRaisingEvents <- true

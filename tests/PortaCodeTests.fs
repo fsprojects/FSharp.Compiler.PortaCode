@@ -616,6 +616,27 @@ if v <> 17 then failwithf "fail fail! expected 17, got %d"  v
 
 [<TestCase(true)>]
 [<TestCase(false, Ignore= "fails without dynamic emit types")>]
+let SimpleInheritGenericInstantiationDecl(dyntypes) =
+    SimpleTestCase false dyntypes "SimpleInheritGenericInstantiationDecl" """
+
+type BaseClass(x: int) =
+    member _.X = x
+
+if typeof<BaseClass>.Name <> "BaseClass" then failwith "bad name"
+
+type C() =
+    inherit System.Collections.Generic.List<BaseClass>() 
+    override x.Equals(y:obj) = true
+
+if typeof<C>.Name <> "C" then failwith "bad name"
+let c = C()
+let v = c.Equals(c)
+
+if v <> true then failwithf "fail fail! expected true, got %b"  v
+        """
+
+[<TestCase(true)>]
+[<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let SimpleInterfaceImpl2(dyntypes) =
     SimpleTestCase false dyntypes "SimpleInterfaceImpl" """
 open System.Collections
