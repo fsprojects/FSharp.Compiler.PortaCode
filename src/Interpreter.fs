@@ -775,13 +775,34 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         else 
             ty
 
-    let instantiateConstructor typeArgsT (cinfo: ConstructorInfo) = 
-        if cinfo.DeclaringType.IsGenericType then 
-            let tinfo = cinfo.DeclaringType.MakeGenericType(typeArgsT)
-            tinfo.GetConstructors(bindAll) |> Array.find (fun cinfo2 -> cinfo2.MetadataToken = cinfo.MetadataToken)
-        else cinfo
+    // This is gross. TypeBuilderInstantiation should really be a public type, since we
+    // have to use alternative means for various Method/Field/Constructor lookups. However since 
+    // it isn't we resort to this technique...
+    let TypeBuilderInstantiationT = 
+        let ty = Type.GetType("System.Reflection.Emit.TypeBuilderInstantiation")
 
-    member ctxt.InterpretExpressionThunk(thunkId: int, typeArgsV: Type[], argsV: obj[]) : obj = 
+        assert (not (isNull ty))
+        ty
+
+    let typeIsNotQueryable (ty: Type) = 
+        (ty :? TypeBuilder) || ((ty.GetType()).Equals(TypeBuilderInstantiationT))
+
+    let getGenericTypeDefinition (ty: Type) = 
+        if ty.IsGenericType then ty.GetGenericTypeDefinition() else ty
+
+    let instantiateConstructor typeArgsT (cinfo: ConstructorInfo) = 
+        let parentT = getGenericTypeDefinition cinfo.DeclaringType       
+        if parentT.IsGenericType then 
+            let parentTI = parentT.MakeGenericType(typeArgsT)
+            if typeIsNotQueryable parentTI then 
+                let ctorG = parentT.GetConstructors(bindAll) |> Array.find (fun cinfo2 -> cinfo2.MetadataToken = cinfo.MetadataToken)
+                TypeBuilder.GetConstructor(parentTI, ctorG)
+            else
+                parentTI.GetConstructors(bindAll) |> Array.find (fun cinfo2 -> cinfo2.MetadataToken = cinfo.MetadataToken)
+        else
+            cinfo
+
+    member _.InterpretExpressionThunk(thunkId: int, typeArgsV: Type[], argsV: obj[]) : obj = 
         let fM = shellTypeThunks.[thunkId] 
         //if membDef.Name <> "ToString" then 
         //   printfn "InterpretExpressionThunk: memberId = %d, typeArgsV=%A, args = %A" memberId typeArgsV argsV
@@ -1211,6 +1232,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             for decl in decls do
                 match decl with 
                 | DDeclEntity (entityDef, subDecls) -> 
+                    // Add any types not emitted as shell types
                     if not (entityResolutions.ContainsKey(entityDef.Ref)) then
                         entityResolutions.[entityDef.Ref] <- UEntity entityDef
                    
@@ -1340,7 +1362,10 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             protectEval false range (fun () -> ctxt.EvalApplication(env, funcExpr, typeArgs, argExprs))
 
         | DExpr.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs, range) -> 
-             protectEval false range (fun () -> ctxt.EvalCall(env, objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs, range))
+            // don't add stack frams for 'a |> f'
+            // TODO: think how to generalize this
+            let noProtect = memberOrFunc.Name.Contains("op_PipeRight")
+            protectEval noProtect range (fun () -> ctxt.EvalCall(env, objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs, range))
 
         | DExpr.Coerce(targetType, inpExpr) -> 
             ctxt.EvalExpr(env, inpExpr)
@@ -1544,7 +1569,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let objValOpt = objExprOpt |> Option.map (fun objExpr -> ctxt.EvalExpr(env, objExpr))
         objValOpt |> Option.map getVal |> Option.toObj
 
-    member ctxt.EvalDefaultValue(env, defaultType) =
+    member _.EvalDefaultValue(env, defaultType) =
         let defaultTypeR = resolveType (env, defaultType)
         let v = 
             match defaultTypeR with
@@ -1606,7 +1631,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     res
 
     member ctxt.EvalLet(env, (bindingVar, bindingExpr), bodyExpr) =
-        let bindingExprV = protectEval bindingVar.IsCompilerGenerated bindingVar.Range (fun () -> ctxt.EvalExpr(env, bindingExpr))
+        let bindingExprV = ctxt.EvalExpr(env, bindingExpr)
         let env = bind sink env bindingVar bindingExprV
         ctxt.EvalExpr (env, bodyExpr)
 
@@ -1614,7 +1639,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let valueThunks = recursiveBindings |> Array.map (fun _ -> { Value = null })
         let envInner = bindMany sink env (Array.map fst recursiveBindings) valueThunks
         (valueThunks, recursiveBindings) ||> Array.iter2 (fun valueThunk (recursiveBindingVar,recursiveBindingExpr) -> 
-            let v = protectEval recursiveBindingVar.IsCompilerGenerated recursiveBindingVar.Range (fun () -> ctxt.EvalExpr(envInner, recursiveBindingExpr)) |> getVal 
+            let v = ctxt.EvalExpr(envInner, recursiveBindingExpr) |> getVal
             valueThunk.Value <- v)
         ctxt.EvalExpr (envInner, bodyExpr)
 

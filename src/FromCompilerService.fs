@@ -37,7 +37,7 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             DExpr.Call(None, mrefR, typeArgs1R, typeArgs2R, [| objExprR |], rangeR)
 
         | BasicPatterns.Application(funcExpr, typeArgs, argExprs) -> 
-            let rangeR = convRange expr.Range
+            let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs, rangeR)
 
         // The F# Compiler Service inserts "raise 1" for expressions that don't check

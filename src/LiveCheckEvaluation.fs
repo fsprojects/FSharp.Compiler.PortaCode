@@ -153,14 +153,15 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
 
                for diag in diags do 
                     printfn "%s" (diag.ToString())
-                    let range = diag.Location
-                    let message = 
-                       "LiveCheck: " + diag.Message + 
-                       ([| for m in Array.tail (Array.rev diag.LocationStack) -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
-                    let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
-                    let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
-                    let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
-                    yield line |]
+                    for range in diag.LocationStack do
+                        if Path.GetFullPath(range.File) = Path.GetFullPath(sourceFile) then
+                            let message = 
+                               "LiveCheck: " + diag.Message + 
+                               ([| for m in Array.rev diag.LocationStack -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
+                            let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
+                            let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
+                            let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
+                            yield line |]
 
         emitInfoFile sourceFile lines
 
@@ -218,7 +219,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
         else [| |]
 
     /// Evaluate the declarations using the interpreter
-    member t.EvaluateDecls fileContents = 
+    member t.EvaluateDecls (fileContents: seq<FSharpImplementationFileContents>) = 
         let assemblyTable = 
             dict [| for r in options do 
                         //printfn "typeof<obj>.Assembly.Location = %s" typeof<obj>.Assembly.Location
@@ -302,13 +303,15 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
         assemblyNameId <- assemblyNameId + 1
         let assemblyName = AssemblyName("Eval" + string assemblyNameId)
         let ctxt = EvalContext(assemblyName, dyntypes, assemblyResolver, ?sink=sink)
-        let convFile (i: FSharpImplementationFileContents) =         
-            i.FileName, { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
 
-        let fileConvContents = [| for i in fileContents -> convFile i |]
+        let fileConvContents = 
+            [| for i in fileContents -> 
+                 let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
+                 i.FileName, code |]
 
-        for (_, contents) in fileConvContents do 
-            ctxt.AddDecls(contents.Code)
+        let allDecls =
+            [| for (_, contents) in fileConvContents do yield! contents.Code |]
+        ctxt.AddDecls(allDecls)
 
         let mutable res = Ok()
         for (sourceFile, ds) in fileConvContents do 
