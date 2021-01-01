@@ -266,15 +266,16 @@ let ProcessCommandLine (argv: string[]) =
                 printfn "fslive: EVALUATING ALL INPUTS...." 
                 let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
                 match evaluator.EvaluateDecls implFiles with
-                | Error _ when not watch -> exit 1
-                | _ -> ()
-
-            // The default is to dump
-            if dump && webhook.IsNone then 
+                | Error err when not watch -> Result.Error (None, None, None, None)
+                | _ -> Result.Ok()
+            elif dump && webhook.IsNone then 
+                // The default is to dump
                 let fileConvContents = jsonFiles (Array.ofList implFiles)
 
                 printfn "%A" fileConvContents
-            Result.Ok()
+                Result.Ok()
+            else
+                Result.Ok()
 
         with err when watch -> 
             printfn "fslive: exception: %A" (err.ToString())

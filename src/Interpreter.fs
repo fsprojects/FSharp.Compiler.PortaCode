@@ -198,22 +198,18 @@ let protectInvoke f =
     try f() 
     with exn -> protectRaise exn
 
-let WilFailTraitCallInvoke (traitName, sourceTypeR: Type, isInstance) =
-    let bindingFlags =
-        (if isInstance then BindingFlags.Instance else BindingFlags.Static) 
-        ||| BindingFlags.Public 
-        ||| BindingFlags.NonPublic 
-        ||| BindingFlags.FlattenHierarchy
-    let meths = sourceTypeR.GetMethods(bindingFlags) |> Array.filter (fun n -> n.Name = traitName) 
-    meths.Length = 0 
+let rec matchTypeParameters (t1 : Type) (t2 : Type) = 
+    if t1.IsGenericParameter then 
+        Seq.singleton (t1,t2)
+    else
+        let ga1 = t1.GetGenericArguments()
+        let ga2 = t2.GetGenericArguments()
+        if ga1.Length <> ga2.Length then 
+            Seq.empty
+        else 
+            (ga1,ga2) ||> Seq.map2 matchTypeParameters |> Seq.concat
 
 let EvalTraitCallInvoke (traitName, sourceTypeRs: Type list, isInstance, argExprsV: obj[]) =
-    let sourceTypeR =
-        match sourceTypeRs with 
-        | [t] -> t
-        | [t1;t2] -> if WilFailTraitCallInvoke (traitName, t1, isInstance) then t2 else t1
-        | _ -> failwith "unexpected"
-
     let objV = if isInstance then argExprsV.[0] else null
     let argsV = if isInstance then argExprsV.[1..] else argExprsV
     let bindingFlags =
@@ -222,9 +218,64 @@ let EvalTraitCallInvoke (traitName, sourceTypeRs: Type list, isInstance, argExpr
         ||| BindingFlags.NonPublic 
         ||| BindingFlags.InvokeMethod
         ||| BindingFlags.FlattenHierarchy
-    //printfn "sourceTypeR = %A, traitName = %s, objV = %A, argsV types = %A" sourceTypeR traitName objV [| for a in argsV -> a.GetType() |]
-    let resObj = try protectInvoke (fun () ->  sourceTypeR.InvokeMember(traitName, bindingFlags, null, objV, argsV)) with e -> printfn "failed!"; reraise ()
-    Value resObj
+    let candidateMethods (tp : Type) =
+        tp.GetMethods(bindingFlags)
+        |> Array.choose 
+            (fun n -> 
+                if n.Name <> traitName then 
+                    None
+                elif not n.IsGenericMethod then 
+                    Some (n :> MethodBase)
+                else
+                    let parameters = n.GetGenericMethodDefinition().GetParameters()
+                    if parameters.Length <> argsV.Length then 
+                        None
+                    else
+                        let boundTypeParameters = 
+                            (parameters,argsV)
+                            ||> Seq.map2
+                                (fun p a -> 
+                                    if p.ParameterType.ContainsGenericParameters then 
+                                        matchTypeParameters p.ParameterType (a.GetType())
+                                    else Seq.empty
+                                )
+                            |> Seq.concat
+                            |> Seq.toArray
+                        let genericArgs = n.GetGenericArguments()
+                        let boundGenericArgs = 
+                            genericArgs
+                            |> Array.choose 
+                                (fun i -> 
+                                    boundTypeParameters 
+                                    |> Array.tryPick (fun (genParam, boundType) -> if genParam = i then Some boundType else None)
+                                )
+                        if genericArgs.Length <> boundGenericArgs.Length then 
+                            None 
+                        else 
+                            Some(n.MakeGenericMethod(boundGenericArgs) :> MethodBase)
+            )
+    let tryBindMethod (tp : Type) =
+        match candidateMethods tp with
+        | [||] -> None
+        | methods ->
+            let mutable args = argsV
+            let mutable state = null
+            try 
+                Some(Type.DefaultBinder.BindToMethod(bindingFlags, methods, &args, null, null, null, &state))
+            with 
+            | _ -> None
+    match sourceTypeRs |> Seq.tryPick tryBindMethod with 
+    | Some m -> 
+        let resObj = 
+            try
+                m.Invoke(objV, argsV)
+            with 
+            | e ->  
+                printfn "failed!"
+                reraise()
+        Value resObj
+    | None -> raise (MissingMethodException(traitName))
+
 
 let inline unOp op (argsV: obj[]) f32 f64 = 
     match argsV.[0] with 
@@ -1013,11 +1064,6 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     let membRef = membDef.Ref
                     let entityDef = shellTypeEntityInfo.[membDef.EnclosingEntity]
                     let typB, env  = enterTypeDef entityDef
-                    let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
-                    let paramTypesR = resolveTypes(env, paramTypes) 
-                    let (RTypesErased env paramTypesT) = paramTypesR
-                    let (RTypeErased env returnTypeT) = resolveType(env, membDef.ReturnType) 
-                    let returnTypeT = (if returnTypeT = typeof<unit> then typeof<Void> else returnTypeT)
                     if membDef.Name = ".ctor" then
                         
                         // Strip off the call to the base class constructor and emit it in compiled code
@@ -1025,6 +1071,9 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         //
                         // TODO : base ctor calls must currently take no arguments (since we
                         // don't have an expression compiler - we could interpret these)
+                        let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
+                        let paramTypesR = resolveTypes(env, paramTypes) 
+                        let (RTypesErased env paramTypesT) = paramTypesR
                         let attrs = MethodAttributes.Public 
                         let cB = typB.DefineConstructor(attrs, CallingConventions.Standard,paramTypesT)
                         for (i, pn) in Array.indexed membDef.Parameters do  
@@ -1056,14 +1105,23 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 ||| MethodAttributes.HideBySig
                                 ||| (if membDef.IsInstance then enum 0 else MethodAttributes.Static)
 
-                        let mB = typB.DefineMethod(membDef.Name, attrs, cconv, returnTypeT, paramTypesT)
+                        let mB = typB.DefineMethod(membDef.Name, attrs, cconv) 
+                        let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
+                        let env = 
+                            // Define the generic parameters on the method
+                            if membDef.GenericParameters.Length > 0 then 
+                                mB.DefineGenericParameters [| for gp in membDef.GenericParameters -> gp.Name |] |> ignore
 
-                        // Define the generic parameters on the method
-                        if membDef.GenericParameters.Length > 0 then 
-                            mB.DefineGenericParameters [| for gp in membDef.GenericParameters -> gp.Name |] |> ignore
-
-                            let env = (env, membDef.GenericParameters, mB.GetGenericArguments()) |||> Array.fold2 bindType
-                            defineGenericParamaterConstraints env (mB.GetGenericArguments()) membDef.GenericParameters
+                                let env = (env, membDef.GenericParameters, mB.GetGenericArguments()) |||> Array.fold2 bindType
+                                defineGenericParamaterConstraints env (mB.GetGenericArguments()) membDef.GenericParameters
+                                env
+                            else env
+                        let paramTypesR = resolveTypes(env, paramTypes) 
+                        let (RTypesErased env paramTypesT) = paramTypesR
+                        let (RTypeErased env returnTypeT) = resolveType(env, membDef.ReturnType) 
+                        let returnTypeT = (if returnTypeT = typeof<unit> then typeof<Void> else returnTypeT)
+                        mB.SetParameters(paramTypesT)
+                        mB.SetReturnType(returnTypeT)
 
                         for (i, pn) in Array.indexed membDef.Parameters do  
                             mB.DefineParameter(i+1, ParameterAttributes.None, pn.Name) |> ignore

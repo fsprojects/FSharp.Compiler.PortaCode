@@ -732,6 +732,22 @@ if a <> 3.0 then failwith "fail fail!"
 if b <> 4.0 then failwith "fail fail!" 
         """
 
+[<TestCase(true)>]
+//[<TestCase(false)>]
+let GenericMethodTraitCall(dyntypes) =
+    SimpleTestCase false dyntypes "GenericMethodTraitCall" """
+type C<'a,'b>(a : 'a, b : 'b) =
+    member _.A = a
+    member _.B = b
+    static member (-->)(x : C<'a,'b>,y : C<'b,'c>) : C<'a,'d> = C(x.A,y.B)
+
+let a = C(12,30.0)
+let b = C(20.0,30M)
+let c = (-->) a b
+if c.A <> 12 then failwith "fail fail! 1" 
+if c.B <> 30M then failwith "fail fail! 2" 
+        """
+
 [<TestCase(true, Ignore= "ignore because union types don't get dynamic emit types yet, codegen is too complicated and FCS doesn't tell us how") >]
 [<TestCase(false, Ignore= "fails without dynamic emit types")>]
 let UnionTypeWithOverride(dyntypes) =
