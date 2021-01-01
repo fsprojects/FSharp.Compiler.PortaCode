@@ -261,7 +261,7 @@ let ProcessCommandLine (argv: string[]) =
                 sendToWebHook hook implFiles
                 Result.Ok()
             | None -> 
-            
+
             if not dump && webhook.IsNone then 
                 printfn "fslive: EVALUATING ALL INPUTS...." 
                 let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
