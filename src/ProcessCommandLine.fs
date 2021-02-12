@@ -11,7 +11,9 @@ open System
 open System.Reflection
 open System.Collections.Generic
 open System.IO
-open FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.CodeAnalysis
+open FSharp.Compiler.Diagnostics
+open FSharp.Compiler.Symbols
 open FSharp.Compiler.Text
 open System.Net
 open System.Text
@@ -177,20 +179,20 @@ let ProcessCommandLine (argv: string[]) =
             let parseResults, checkResults = checker.ParseAndCheckFileInProject(sourceFile, 0, SourceText.ofString (readFile sourceFile), options) |> Async.RunSynchronously  
             match checkResults with 
             | FSharpCheckFileAnswer.Aborted -> 
-                for e in parseResults.Errors do   
+                for e in parseResults.Diagnostics do   
                    printfn "Error: %A" e
                 failwith "unexpected aborted"
                 Result.Error (parseResults.ParseTree, None, None, None)
 
             | FSharpCheckFileAnswer.Succeeded res -> 
                 let mutable hasErrors = false
-                for error in res.Errors do 
+                for error in res.Diagnostics do 
                     printfn "%s" (error.ToString())
-                    if error.Severity = FSharpErrorSeverity.Error then 
+                    if error.Severity = FSharpDiagnosticSeverity.Error then 
                         hasErrors <- true
 
                 if hasErrors then 
-                    Result.Error (parseResults.ParseTree, None, Some res.Errors, res.ImplementationFile)
+                    Result.Error (parseResults.ParseTree, None, Some res.Diagnostics, res.ImplementationFile)
                 else
                     Result.Ok (parseResults.ParseTree, res.ImplementationFile)
         with 
@@ -265,7 +267,12 @@ let ProcessCommandLine (argv: string[]) =
             if not dump && webhook.IsNone then 
                 printfn "fslive: EVALUATING ALL INPUTS...." 
                 let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
-                match evaluator.EvaluateDecls implFiles with
+                let fileConvContents = 
+                    [| for i in implFiles -> 
+                         let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
+                         i.FileName, code |]
+
+                match evaluator.EvaluateDecls fileConvContents with
                 | Error _ when not watch -> exit 1
                 | _ -> ()
 

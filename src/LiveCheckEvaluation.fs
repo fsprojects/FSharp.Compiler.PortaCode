@@ -4,12 +4,10 @@ namespace FSharp.Compiler.PortaCode
 
 open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
-open FSharp.Compiler.PortaCode.FromCompilerService
 open System
 open System.Reflection
 open System.Collections.Generic
 open System.IO
-open FSharp.Compiler.SourceCodeServices
 open System.Text
 
 type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions) =
@@ -219,7 +217,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
         else [| |]
 
     /// Evaluate the declarations using the interpreter
-    member t.EvaluateDecls (fileContents: seq<FSharpImplementationFileContents>) = 
+    member t.EvaluateDecls (fileConvContents: (string * DFile)[]) = 
         let assemblyTable = 
             dict [| for r in options do 
                         //printfn "typeof<obj>.Assembly.Location = %s" typeof<obj>.Assembly.Location
@@ -303,11 +301,6 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
         assemblyNameId <- assemblyNameId + 1
         let assemblyName = AssemblyName("Eval" + string assemblyNameId)
         let ctxt = EvalContext(assemblyName, dyntypes, assemblyResolver, ?sink=sink)
-
-        let fileConvContents = 
-            [| for i in fileContents -> 
-                 let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
-                 i.FileName, code |]
 
         let allDecls =
             [| for (_, contents) in fileConvContents do yield! contents.Code |]

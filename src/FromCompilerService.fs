@@ -3,8 +3,11 @@ module FSharp.Compiler.PortaCode.FromCompilerService
 
 open FSharp.Compiler.PortaCode.CodeModel
 open System.Collections.Generic
-open FSharp.Compiler.SourceCodeServices
-open FSharp.Compiler.Range
+open FSharp.Compiler.Symbols
+open FSharp.Compiler.Symbols.FSharpExprPatterns
+open FSharp.Compiler.Text
+open FSharp.Compiler.Text.Position
+open FSharp.Compiler.Text.Range
 
 let map2 f g (a,b) = (f a, g b)
 
@@ -21,14 +24,14 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
     let rec convExpr (expr:FSharpExpr) : DExpr = 
 
         match expr with 
-        | BasicPatterns.AddressOf(lvalueExpr) -> 
+        | AddressOf(lvalueExpr) -> 
             DExpr.AddressOf(convExpr lvalueExpr)
 
-        | BasicPatterns.AddressSet(lvalueExpr, rvalueExpr) -> 
+        | AddressSet(lvalueExpr, rvalueExpr) -> 
             DExpr.AddressSet(convExpr lvalueExpr, convExpr rvalueExpr)
 
         // FCS TODO: fix FCS quirk with IsNone and IsSome on the option type
-        | BasicPatterns.Application( BasicPatterns.Call(Some obj, memberOrFunc, tyargs1, tyargs2, [ ]), typeArgs, [ arg ]) when memberOrFunc.CompiledName = "get_IsNone" || memberOrFunc.CompiledName = "get_IsSome"  -> 
+        | Application( Call(Some obj, memberOrFunc, tyargs1, tyargs2, [ ]), typeArgs, [ arg ]) when memberOrFunc.CompiledName = "get_IsNone" || memberOrFunc.CompiledName = "get_IsSome"  -> 
             let objExprR = convExpr obj
             let mrefR = convMemberRef memberOrFunc
             let typeArgs1R = convTypes tyargs1
@@ -36,16 +39,16 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             let rangeR = convRange expr.Range
             DExpr.Call(None, mrefR, typeArgs1R, typeArgs2R, [| objExprR |], rangeR)
 
-        | BasicPatterns.Application(funcExpr, typeArgs, argExprs) -> 
+        | Application(funcExpr, typeArgs, argExprs) -> 
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.Application(convExpr funcExpr, convTypes typeArgs, convExprs argExprs, rangeR)
 
         // The F# Compiler Service inserts "raise 1" for expressions that don't check
-        | BasicPatterns.Call(_, memberOrFunc, _, _, [ BasicPatterns.Const((:? int as c), _) ]) 
+        | Call(_, memberOrFunc, _, _, [ Const((:? int as c), _) ]) 
              when c = 1 && memberOrFunc.CompiledName = "Raise" -> 
                 raise IncompleteExpr
 
-        | BasicPatterns.Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
+        | Call(objExprOpt, memberOrFunc, typeArgs1, typeArgs2, argExprs) -> 
             let objExprOptR = convExprOpt objExprOpt
             let mrefR = convMemberRef memberOrFunc
             let typeArgs1R = convTypes typeArgs1
@@ -59,119 +62,119 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             | _ -> 
                 DExpr.Call(objExprOptR, mrefR, typeArgs1R, typeArgs2R, argExprsR, rangeR)
 
-        | BasicPatterns.Coerce(targetType, inpExpr) -> 
+        | Coerce(targetType, inpExpr) -> 
             DExpr.Coerce(convType targetType, convExpr inpExpr)
 
-        | BasicPatterns.FastIntegerForLoop(startExpr, limitExpr, consumeExpr, isUp) -> 
+        | FastIntegerForLoop(startExpr, limitExpr, consumeExpr, isUp) -> 
             DExpr.FastIntegerForLoop(convExpr startExpr, convExpr limitExpr, convExpr consumeExpr, isUp)
 
-        | BasicPatterns.ILAsm(asmCode, typeArgs, argExprs) -> 
+        | ILAsm(asmCode, typeArgs, argExprs) -> 
             DExpr.ILAsm(asmCode, convTypes typeArgs, convExprs argExprs)
 
-        | BasicPatterns.ILFieldGet (objExprOpt, fieldType, fieldName) -> 
+        | ILFieldGet (objExprOpt, fieldType, fieldName) -> 
             DExpr.ILFieldGet(convExprOpt objExprOpt, convType fieldType, fieldName)
 
-        | BasicPatterns.ILFieldSet (objExprOpt, fieldType, fieldName, valueExpr) -> 
+        | ILFieldSet (objExprOpt, fieldType, fieldName, valueExpr) -> 
             DExpr.ILFieldSet (convExprOpt objExprOpt, convType fieldType, fieldName, convExpr valueExpr)
 
-        | BasicPatterns.IfThenElse (guardExpr, thenExpr, elseExpr) -> 
+        | IfThenElse (guardExpr, thenExpr, elseExpr) -> 
             DExpr.IfThenElse (convExpr guardExpr, convExpr thenExpr, convExpr elseExpr)
 
-        | BasicPatterns.Lambda(lambdaVar, bodyExpr) -> 
+        | Lambda(lambdaVar, bodyExpr) -> 
             DExpr.Lambda(convType lambdaVar.FullType, convType bodyExpr.Type, convLocalDef lambdaVar, convExpr bodyExpr)
 
-        | BasicPatterns.Let((bindingVar, bindingExpr), bodyExpr) -> 
+        | Let((bindingVar, bindingExpr), bodyExpr) -> 
             DExpr.Let((convLocalDef bindingVar, convExpr bindingExpr), convExpr bodyExpr)
 
-        | BasicPatterns.LetRec(recursiveBindings, bodyExpr) -> 
+        | LetRec(recursiveBindings, bodyExpr) -> 
             DExpr.LetRec(List.mapToArray (map2 convLocalDef convExpr) recursiveBindings, convExpr bodyExpr)
 
-        | BasicPatterns.NewArray(arrayType, argExprs) -> 
+        | NewArray(arrayType, argExprs) -> 
             DExpr.NewArray(convType arrayType, convExprs argExprs)
 
-        | BasicPatterns.NewDelegate(delegateType, delegateBodyExpr) -> 
+        | NewDelegate(delegateType, delegateBodyExpr) -> 
             DExpr.NewDelegate(convType delegateType, convExpr delegateBodyExpr)
 
-        | BasicPatterns.NewObject(objCtor, typeArgs, argExprs: FSharpExpr list) -> 
+        | NewObject(objCtor, typeArgs, argExprs: FSharpExpr list) -> 
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewObject(convMemberRef objCtor, convTypes typeArgs, convArgExprs objCtor argExprs, rangeR)
 
-        | BasicPatterns.NewRecord(recordType, argExprs) -> 
+        | NewRecord(recordType, argExprs) -> 
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewRecord(convType recordType, convExprs argExprs, rangeR)
 
-        | BasicPatterns.NewAnonRecord(recordType, argExprs) -> 
+        | NewAnonRecord(recordType, argExprs) -> 
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             let fieldRefs = (stripTypeAbbreviations recordType).AnonRecordTypeDetails.SortedFieldNames |> Array.mapi (fun i nm -> DFieldRef (i, nm))
             DExpr.NewAnonRecord(fieldRefs, convExprs argExprs, rangeR)
 
-        | BasicPatterns.NewTuple(tupleType, argExprs) -> 
+        | NewTuple(tupleType, argExprs) -> 
             DExpr.NewTuple(convType tupleType, convExprs argExprs)
 
-        | BasicPatterns.NewUnionCase(unionType, unionCase, argExprs) -> 
+        | NewUnionCase(unionType, unionCase, argExprs) -> 
             let rangeR = convRange (expr.Range |> trimRanges (argExprs |> List.map (fun e -> e.Range)))
             DExpr.NewUnionCase(convType unionType, convUnionCase unionCase, convExprs argExprs, rangeR)
 
-        | BasicPatterns.Quote(quotedExpr) -> 
+        | Quote(quotedExpr) -> 
             DExpr.Quote(convExpr quotedExpr)
 
-        | BasicPatterns.FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
+        | FSharpFieldGet(objExprOpt, recordOrClassType, fieldInfo) -> 
             let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt) |> List.map (fun e -> e.Range)))
             DExpr.FSharpFieldGet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, rangeR)
 
-        | BasicPatterns.FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> 
+        | FSharpFieldSet(objExprOpt, recordOrClassType, fieldInfo, argExpr) -> 
             let rangeR = convRange (expr.Range |> trimRanges ((Option.toList objExprOpt @ [argExpr]) |> List.map (fun e -> e.Range)))
             DExpr.FSharpFieldSet(convExprOpt objExprOpt, convType recordOrClassType, convFieldRef fieldInfo, convExpr argExpr, rangeR)
 
-        | BasicPatterns.Sequential(firstExpr, secondExpr) -> 
+        | Sequential(firstExpr, secondExpr) -> 
             let rangeR = convRange expr.Range
             DExpr.Sequential(convExpr firstExpr, convExpr secondExpr, rangeR)
 
-        | BasicPatterns.TryFinally(bodyExpr, finalizeExpr) -> 
+        | TryFinally(bodyExpr, finalizeExpr) -> 
             DExpr.TryFinally(convExpr bodyExpr, convExpr finalizeExpr)
 
-        | BasicPatterns.TryWith(bodyExpr, filterVar, filterExpr, catchVar, catchExpr) -> 
+        | TryWith(bodyExpr, filterVar, filterExpr, catchVar, catchExpr) -> 
             DExpr.TryWith(convExpr bodyExpr, convLocalDef filterVar, convExpr filterExpr, convLocalDef catchVar, convExpr catchExpr)
 
-        | BasicPatterns.TupleGet(tupleType, tupleElemIndex, tupleExpr) -> 
+        | TupleGet(tupleType, tupleElemIndex, tupleExpr) -> 
             DExpr.TupleGet(convType tupleType, tupleElemIndex, convExpr tupleExpr)
 
-        | BasicPatterns.DecisionTree(decisionExpr, decisionTargets) -> 
+        | DecisionTree(decisionExpr, decisionTargets) -> 
             DExpr.DecisionTree(convExpr decisionExpr, List.mapToArray (map2 (List.mapToArray convLocalDef) convExpr) decisionTargets)
 
-        | BasicPatterns.DecisionTreeSuccess (decisionTargetIdx, decisionTargetExprs) -> 
+        | DecisionTreeSuccess (decisionTargetIdx, decisionTargetExprs) -> 
             DExpr.DecisionTreeSuccess (decisionTargetIdx, convExprs decisionTargetExprs)
 
-        | BasicPatterns.TypeLambda(genericParams, bodyExpr) -> 
+        | TypeLambda(genericParams, bodyExpr) -> 
             DExpr.TypeLambda(Array.map convGenericParamDef (Array.ofList genericParams), convExpr bodyExpr)
 
-        | BasicPatterns.TypeTest(ty, inpExpr) -> 
+        | TypeTest(ty, inpExpr) -> 
             DExpr.TypeTest(convType ty, convExpr inpExpr)
 
-        | BasicPatterns.AnonRecordGet(objExpr, anonRecdType, n) -> 
+        | AnonRecordGet(objExpr, anonRecdType, n) -> 
             let rangeR = expr.Range |> trimRanges [objExpr.Range] |> convRange
             let fieldRef = DFieldRef (n, anonRecdType.AnonRecordTypeDetails.SortedFieldNames.[n])
             DExpr.AnonRecordGet(convExpr objExpr, fieldRef, rangeR)
 
-        | BasicPatterns.UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> 
+        | UnionCaseSet(unionExpr, unionType, unionCase, unionCaseField, valueExpr) -> 
             DExpr.UnionCaseSet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField, convExpr valueExpr)
 
-        | BasicPatterns.UnionCaseGet(unionExpr, unionType, unionCase, unionCaseField) -> 
+        | UnionCaseGet(unionExpr, unionType, unionCase, unionCaseField) -> 
             DExpr.UnionCaseGet(convExpr unionExpr, convType unionType, convUnionCase unionCase, convUnionCaseField unionCase unionCaseField)
 
-        | BasicPatterns.UnionCaseTest(unionExpr, unionType, unionCase) -> 
+        | UnionCaseTest(unionExpr, unionType, unionCase) -> 
             DExpr.UnionCaseTest(convExpr unionExpr, convType unionType, convUnionCase unionCase)
 
-        | BasicPatterns.UnionCaseTag(unionExpr, unionType) -> 
+        | UnionCaseTag(unionExpr, unionType) -> 
             DExpr.UnionCaseTag(convExpr unionExpr, convType unionType)
 
-        | BasicPatterns.ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> 
+        | ObjectExpr(objType, baseCallExpr, overrides, interfaceImplementations) -> 
             DExpr.ObjectExpr(convType objType, convExpr baseCallExpr, Array.map convObjMemberDef (Array.ofList overrides), Array.map (map2 convType (Array.ofList >> Array.map convObjMemberDef)) (Array.ofList interfaceImplementations))
 
-        | BasicPatterns.TraitCall(sourceTypes, traitName, memberFlags, typeInstantiation, argTypes, argExprs) -> 
+        | TraitCall(sourceTypes, traitName, memberFlags, typeInstantiation, argTypes, argExprs) -> 
             DExpr.TraitCall(convTypes sourceTypes, traitName, memberFlags.IsInstance, convTypes typeInstantiation, convTypes argTypes, convExprs argExprs, convRange expr.Range)
 
-        | BasicPatterns.ValueSet(valToSet, valueExpr) -> 
+        | ValueSet(valToSet, valueExpr) -> 
             let valToSetR = 
                 if valToSet.IsModuleValueOrMember then 
                     Choice2Of2 (convMemberRef valToSet)
@@ -180,22 +183,22 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
             let rangeR = convRange expr.Range
             DExpr.ValueSet(valToSetR, convExpr valueExpr, rangeR)
 
-        | BasicPatterns.WhileLoop(guardExpr, bodyExpr) -> 
+        | WhileLoop(guardExpr, bodyExpr) -> 
             DExpr.WhileLoop(convExpr guardExpr, convExpr bodyExpr)
 
-        | BasicPatterns.BaseValue baseType -> 
+        | BaseValue baseType -> 
             DExpr.BaseValue (convType baseType)
 
-        | BasicPatterns.DefaultValue defaultType -> 
+        | DefaultValue defaultType -> 
             DExpr.DefaultValue (convType defaultType)
 
-        | BasicPatterns.ThisValue thisType -> 
+        | ThisValue thisType -> 
             DExpr.ThisValue (convType thisType)
 
-        | BasicPatterns.Const(constValueObj, constType) -> 
+        | Const(constValueObj, constType) -> 
             DExpr.Const (constValueObj, convType constType) 
 
-        | BasicPatterns.Value(valueToGet) ->
+        | Value(valueToGet) ->
             DExpr.Value(convLocalRef expr.Range valueToGet)
 
         | _ -> failwith (sprintf "unrecognized %+A at %A" expr expr.Range)
@@ -266,7 +269,7 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
         DUnionCaseRef (ucase.CompiledName)
 
     and convUnionCaseField (ucase: FSharpUnionCase) (field: FSharpField) : DFieldRef = 
-        match ucase.UnionCaseFields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
+        match ucase.Fields |> Seq.tryFindIndex (fun field2 -> field2.Name = field.Name) with
         | Some index -> DFieldRef (index, field.Name)
         | None -> failwithf "couldn't find field %s in type %A" field.Name field.DeclaringEntity
 
