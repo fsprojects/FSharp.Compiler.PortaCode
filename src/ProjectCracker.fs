@@ -3,7 +3,7 @@
 open System
 open System.IO
 open System.Collections.Concurrent
-open FSharp.Compiler.SourceCodeServices
+open FSharp.Compiler.CodeAnalysis
 
 module MSBuildPrj = Dotnet.ProjInfo.Inspect
 
@@ -25,16 +25,9 @@ module Option =
     | None -> defaultValue
     | Some x -> x
 
-
 type FilePath = string
-  [<RequireQualifiedAccess>]
-type ProjectSdkType =
-    | DotnetSdk of ProjectSdkTypeDotnetSdk
-and ProjectSdkTypeVerbose =
-    {
-      TargetPath: string
-    }
-and ProjectSdkTypeDotnetSdk =
+
+type ProjectSdkTypeDotnetSdk =
     {
       Configuration: string // Debug
       TargetFramework: string // netcoreapp1.0
@@ -44,24 +37,10 @@ and ProjectSdkTypeDotnetSdk =
       TargetFrameworks: string list // netcoreapp1.0;netstandard1.6
       TargetPath: string
     }
-type ExtraProjectInfoData =
-    {
-        ProjectOutputType: ProjectOutputType
-        ProjectSdkType: ProjectSdkType
-    }
-and ProjectOutputType =
-    | Library
-    | Exe
-    | Custom of string
-
-
 type private ProjectParsingSdk = 
     | DotnetSdk 
-#if OLDFORMATS
-    | VerboseSdk
-#endif
 
-type ParsedProject = string * FSharpProjectOptions * ((string * string) list)
+type ParsedProject = FSharpProjectOptions * ((string * string) list)
 type ParsedProjectCache = ConcurrentDictionary<string, ParsedProject>
 
 let chooseByPrefix (prefix: string) (s: string) =
@@ -80,13 +59,6 @@ let splitByPrefix2 prefixes (s: string) =
     prefixes
     |> List.tryPick (fun prefix -> splitByPrefix prefix s)
 
-let outType rsp =
-    match List.tryPick (chooseByPrefix "--target:") rsp with
-    | Some "library" -> ProjectOutputType.Library
-    | Some "exe" -> ProjectOutputType.Exe
-    | Some v -> ProjectOutputType.Custom v
-    | None -> ProjectOutputType.Exe // default if arg is not passed to fsc
-
 let private outputFileArg = ["--out:"; "-o:"]
 
 let private makeAbs projDir (f: string) =
@@ -100,10 +72,6 @@ let outputFile projDir rsp =
 let isCompileFile (s:string) =
     s.EndsWith(".fs") || s.EndsWith (".fsi")
 
-let compileFiles =
-    //TODO filter the one without initial -
-    List.filter isCompileFile
-
 let references =
     List.choose (chooseByPrefix "-r:")
 
@@ -116,11 +84,6 @@ let useFullPaths projDir (s: string) =
             s |> makeAbs projDir |> Path.GetFullPath
         else
             s
-let msbuildPropProjectOutputType (s: string) =
-    match s.Trim() with
-    | MSBuildPrj.MSBuild.ConditionEquals "Exe" -> ProjectOutputType.Exe
-    | MSBuildPrj.MSBuild.ConditionEquals "Library" -> ProjectOutputType.Library
-    | x -> ProjectOutputType.Custom x
 
 let msbuildPropBool (s: string) =
     match s.Trim() with
@@ -311,11 +274,7 @@ let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAs
                 //workaround, arguments in rsp can use relative paths
                 rsp |> List.map (useFullPaths projDir)
 
-            let sdkTypeData, log =
-                match parseAsSdk with
-                | ProjectParsingSdk.DotnetSdk ->
-                    let extraInfo = getExtraInfo tar props
-                    ProjectSdkType.DotnetSdk(extraInfo), []
+            let log = []
 
             let po =
                 {
@@ -330,14 +289,9 @@ let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAs
                     UnresolvedReferences = None
                     OriginalLoadReferences = []
                     Stamp = None
-                    ExtraProjectInfo =
-                        Some (box {
-                            ExtraProjectInfoData.ProjectSdkType = sdkTypeData
-                            ExtraProjectInfoData.ProjectOutputType = outType rspNormalized
-                        })
                 }
 
-            tar, po, log
+            po, log
 
     and projInfo additionalMSBuildProps file : ParsedProject =
         let key = sprintf "%s;%A" file additionalMSBuildProps
@@ -349,31 +303,14 @@ let private getProjectOptionsFromProjectFile (cache: ParsedProjectCache) parseAs
             cache.AddOrUpdate(key, p, fun _ _ -> p)
 
 
-    let _, po, log = projInfo [] file
-    po, log
-
-let private (|ProjectExtraInfoBySdk|_|) po =
-      match po.ExtraProjectInfo with
-      | None -> None
-      | Some x ->
-          match x with
-          | :? ExtraProjectInfoData as extraInfo ->
-              Some extraInfo
-          | _ -> None
-
+    projInfo [] file
+    
 let private loadBySdk (cache: ParsedProjectCache) parseAsSdk msbuildArgs file =
     let po, log = getProjectOptionsFromProjectFile cache parseAsSdk msbuildArgs file
 
-    let compileFiles =
-        let sources = compileFiles (po.OtherOptions |> List.ofArray)
-        match po with
-        | ProjectExtraInfoBySdk extraInfo ->
-            match extraInfo.ProjectSdkType with
-            | ProjectSdkType.DotnetSdk _ ->
-                sources
-        | _ -> sources
+    let compileFiles = po.OtherOptions |> List.ofArray |> List.filter isCompileFile
 
-    Ok (po, Seq.toList compileFiles, (log |> Map.ofList))
+    Ok (po, compileFiles, (log |> Map.ofList))
 
 let load (cache: ParsedProjectCache) msbuildArgs file =
       loadBySdk cache ProjectParsingSdk.DotnetSdk msbuildArgs file
