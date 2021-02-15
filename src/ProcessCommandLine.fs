@@ -23,8 +23,7 @@ let checker = FSharpChecker.Create(keepAssemblyContents = true)
 
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
-    let mutable inbin = None
-    let mutable outbin = None
+    let mutable daemon = false
     let mutable dump = false
     let mutable livecheck = false
     let mutable dyntypes = false
@@ -50,8 +49,7 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--" then haveDashes <- true
                 elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["--projarg:".Length ..]] 
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
-                elif arg.StartsWith "--inbin:" then inbin <- Some arg.["--inbin:".Length ..]
-                elif arg.StartsWith "--outbin:" then inbin <- Some arg.["--outbin:".Length ..]
+                elif arg = "--daemon" then daemon <- true
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
                 elif arg = "--livecheck" then 
@@ -101,16 +99,6 @@ let ProcessCommandLine (argv: string[]) =
                    exit 1
                 else yield arg  |]
 
-    if fsharpArgs.Length = 0 && fsproj.IsNone then 
-        match Seq.toList (Directory.EnumerateFiles(Environment.CurrentDirectory, "*.fsproj")) with 
-        | [ ] -> 
-            failwithf "no project file found, no compilation arguments given and no project file found in \"%s\"" Environment.CurrentDirectory 
-        | [ file ] -> 
-            printfn "fslive: using implicit project file '%s'" file
-            fsproj <- Some file
-        | file1 :: file2 :: _ -> 
-            failwithf "multiple project files found, e.g. %s and %s" file1 file2 
-
     let editDirAndFile (fileName: string) =
         assert useEditFiles
         let infoDir = Path.Combine(Path.GetDirectoryName fileName,".fsharp")
@@ -134,6 +122,42 @@ let ProcessCommandLine (argv: string[]) =
                 File.ReadAllText fileName
         else
             File.ReadAllText fileName
+
+    if daemon then
+        while true do
+            let line = Console.ReadLine()
+            printfn $"fslive: got input {line}"
+            if line.StartsWith("REQUEST") then
+                let parts = line.Split([| ' ' |], StringSplitOptions.RemoveEmptyEntries)
+                let inf = parts.[1]
+                let outf = parts.[2]
+                let req: LiveCheckRequest = 
+                    printfn $"fslive: reading input from {inf}"
+                    let formatter = new BinaryFormatter()
+                    use s = File.OpenRead(inf)
+                    formatter.Deserialize(s) :?> _
+                printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
+                let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, writeinfo=true, livecheck=true)
+                let results = evaluator.EvaluateDecls req.Files
+                printfn $"fslive: results = %A{results}"
+                let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
+                begin 
+                    let formatter = new BinaryFormatter()
+                    printfn $"fslive: serializing result to {outf}"
+                    use out = File.OpenWrite(outf)
+                    formatter.Serialize(out, (resp: LiveCheckResponse))
+                end
+                printfn $"RESPONSE {inf} {outf}"
+
+    elif fsharpArgs.Length = 0 && fsproj.IsNone then 
+        match Seq.toList (Directory.EnumerateFiles(Environment.CurrentDirectory, "*.fsproj")) with 
+        | [ ] -> 
+            failwithf "no project file found, no compilation arguments given and no project file found in \"%s\"" Environment.CurrentDirectory 
+        | [ file ] -> 
+            printfn "fslive: using implicit project file '%s'" file
+            fsproj <- Some file
+        | file1 :: file2 :: _ -> 
+            failwithf "multiple project files found, e.g. %s and %s" file1 file2 
 
     let options = 
         match fsproj with 
@@ -351,22 +375,6 @@ let ProcessCommandLine (argv: string[]) =
     for o in options.OtherOptions do 
         printfn "compiling, option %s" o
 
-    match inbin, outbin with
-    | Some inf, Some outf ->
-        let req: LiveCheckRequest = 
-            let formatter = new BinaryFormatter()
-            use s = File.OpenRead(inf)
-            formatter.Deserialize(s) :?> _
-        let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, writeinfo=true, livecheck=true)
-        let results = evaluator.EvaluateDecls req.Files
-        let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
-        begin 
-            let formatter = new BinaryFormatter()
-            use out = File.OpenWrite(outf)
-            formatter.Serialize(out, (resp: LiveCheckResponse))
-        end
-        1
-    | _ -> 
     if watch then 
         // Send an immediate changed() event
         if webhook.IsNone then 

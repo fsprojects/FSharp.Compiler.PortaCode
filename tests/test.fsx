@@ -30,10 +30,32 @@ type LiveCheckAttribute internal (given: obj[]) =
                (string * int * int * int * int)[] *  (* location stack *)
                string (* message*))[] =
 
-        [| (2, 4842, [| (__SOURCE_FILE__, 36,6,36,8) |], "this is a message") |]
+        let ctors = targetType.GetConstructors()
+        let ctor = 
+            ctors 
+            |> Array.tryFind (fun ctor -> ctor.GetParameters().Length = given.Length)
+            |> function 
+               | None -> 
+                   //printf "couldn't find a model constructor taking Int or Shape parameter, assuming first constructor is target of live check"
+                   ctors.[0]
+               | Some c -> c
+
+        [| for meth in ctor.DeclaringType.GetMethods() do
+            if not meth.ContainsGenericParameters && not meth.DeclaringType.ContainsGenericParameters then
+                for attr in meth.GetCustomAttributes(typeof<LiveCheckAttribute>, true) do
+                    printfn "meth %s has attr"  meth.Name
+              
+                    yield (2, 4842, [| (locFile, locStartLine, locStartColumn, locEndLine, locEndColumn) |], $"this is a message from checker invoke for {targetType.Name}::{meth.Name}") |]
 
 [<LiveCheck(10,20)>]
-let f (a: int, b: int) = a + b
+type C(a: int, b: int) = 
+    [<LiveCheck(30,40)>]
+    member _.entry1(c: int, d: int) = ()
+    [<LiveCheck>]
+    member _.entry2(c: int, d: int) = ()
+
+[<LiveCheck>]
+let f2 : int = failwith "this is a message for failing livecheck of value"
 // tttttttttttttttttttttttt
 
 

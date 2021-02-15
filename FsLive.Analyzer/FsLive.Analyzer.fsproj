@@ -3,7 +3,7 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>netstandard2.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,13 +13,14 @@
   <ItemGroup>
     <Compile Include="Analyzer.fs" />
     
-    <!-- lay down the analyzer as a tool -->
+    <!-- lay down the analyzer DLL in the tools/fsharp41 directory of the package, i.e. a compiler tool -->
     <TfmSpecificPackageFile Include="bin\$(Configuration)\$(TargetFramework)\FsLive.Analyzer.dll">
       <PackagePath>tools/fsharp41/$(TargetFramework)/FsLive.Analyzer.dll</PackagePath>
     </TfmSpecificPackageFile>
+    <!-- lay down the fslive EXE in the tools/fslive directory of the package, i.e. a subsidiary tool -->
     <ExeToolFiles Include="..\FsLive.Cli\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
     <TfmSpecificPackageFile Include="@(ExeToolFiles)">
-      <PackagePath>tools/fslive/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
+      <PackagePath>tools/fslive/netcoreapp3.1/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
     </TfmSpecificPackageFile>
   </ItemGroup>
 
@@ -31,11 +32,11 @@
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 
-  <!-- We place the EXE tool in well-known locations with respect to the analyzer DLL -->
+  <!-- For testing purposes we place the fslive EXE in well-known locations with respect to the analyzer DLL -->
   <Target Name="AfterBuild">
     <Copy
         SourceFiles="@(ExeToolFiles)"
-        DestinationFiles="@(ExeToolFiles->'bin\fslive\%(RecursiveDir)%(Filename)%(Extension)')" />
+        DestinationFiles="@(ExeToolFiles->'bin\fslive\netcoreapp3.1\%(RecursiveDir)%(Filename)%(Extension)')" />
   </Target>
 
 </Project>

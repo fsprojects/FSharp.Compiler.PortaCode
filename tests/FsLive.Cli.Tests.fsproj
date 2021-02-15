@@ -1,4 +1,6 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project>
+     <!-- See https://stackoverflow.com/questions/43921992/how-can-i-use-beforebuild-and-afterbuild-targets-with-visual-studio-2017 -->
+    <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
     <PropertyGroup>
         <TargetFramework>netcoreapp3.1</TargetFramework>
         <OutputType>Library</OutputType>
@@ -26,4 +28,16 @@
         <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />
         <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.3.0" />
     </ItemGroup>
+  <ItemGroup>
+    <ExeToolFiles Include="..\FsLive.Cli\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- For testing purposes we place the fslive EXE in well-known locations with respect to the analyzer DLL -->
+  <Target Name="AfterBuild">
+    <Copy
+        SourceFiles="@(ExeToolFiles)"
+        DestinationFiles="@(ExeToolFiles->'bin\fslive\netcoreapp3.1\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
 </Project>

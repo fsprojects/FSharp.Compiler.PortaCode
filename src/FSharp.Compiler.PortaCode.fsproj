@@ -1,8 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
-        <TargetFramework>netstandard2.1</TargetFramework>
+        <TargetFramework>netstandard2.0</TargetFramework>
     </PropertyGroup>
+    <ItemGroup>
+      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.2-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
+    </ItemGroup>
     <ItemGroup>
         <Compile Include="ProjectCracker.fs" />
         <Compile Include="CodeModel.fs" />

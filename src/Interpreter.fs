@@ -899,7 +899,6 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                 match decl with 
                 | DDeclEntity (entityDef, subDecls) ->
                     if canEmitShellType entityDef then
-                        let (TypeBuilderOrFail typB) = entityResolutions.[entityDef.Ref]
                         let typB, env  = enterTypeDef entityDef
                         if entityDef.GenericParameters.Length > 0 then
                             defineGenericParamaterConstraints env (typB.GetGenericArguments()) entityDef.GenericParameters
@@ -951,7 +950,6 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         let (RTypeErased env t) = resolveType (env, i) 
                         typB.AddInterfaceImplementation(t)
 
-                    buildCustomAttributes entityDef.Range entityDef.CustomAttributes typB.SetCustomAttribute 
                     phase2(subDecls)
                 | _ -> ()
         phase2(decls)
@@ -1126,7 +1124,10 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         let rec phase4(decls: DDecl[]) = 
             for decl in decls do
                 match decl with 
-                | DDeclEntity (_entityDef, subDecls) ->
+                | DDeclEntity (entityDef, subDecls) ->
+                    if canEmitShellType entityDef then
+                        let typB, _env  = enterTypeDef entityDef
+                        buildCustomAttributes entityDef.Range entityDef.CustomAttributes typB.SetCustomAttribute 
                     phase4(subDecls)
                 | DDeclMember (membDef, body, _isLiveCheck) when canEmitShellMethod membDef -> 
                     let membRef = membDef.Ref
