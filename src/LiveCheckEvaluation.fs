@@ -10,20 +10,9 @@ open System.Collections.Generic
 open System.IO
 open System.Text
 
-type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions) =
+type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, livecheck) =
 
     let mutable assemblyNameId = 0
-    let emitInfoFile (sourceFile: string) lines = 
-        let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
-        let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
-        let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
-        printfn "writing info file %s..." infoFile 
-        if not (Directory.Exists infoDir) then
-           Directory.CreateDirectory infoDir |> ignore
-        try 
-            File.WriteAllLines(infoFile, lines, encoding=Encoding.Unicode)
-        finally
-            try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
 
     let LISTLIM = 20
 
@@ -101,67 +90,29 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
 
     let MAXTOOLTIP = 100
 
-    /// Write an info file containing extra information to make available to F# tooling.
-    /// This is currently experimental and only experimental additions to F# tooling
-    /// watch and consume this information.
-    let writeInfoFile (tooltips: (DRange * (string * obj) list * bool)[]) sourceFile (diags: DDiagnostic[]) = 
+    let formatTooltips tooltips =
+        let ranges =  HashSet<DRange>(HashIdentity.Structural)
+        let havePreferred = tooltips |> Array.choose (fun (m,_,prefer) -> if prefer then Some m else None) |> Set.ofArray
+        [| for (range, lines, prefer)  in tooltips do
+            if not (ranges.Contains(range))  && (prefer || not (havePreferred.Contains range)) then 
+                ranges.Add(range) |> ignore
 
-        let lines = 
-            let ranges =  HashSet<DRange>(HashIdentity.Structural)
-            let havePreferred = tooltips |> Array.choose (fun (m,_,prefer) -> if prefer then Some m else None) |> Set.ofArray
-            [| for (range, lines, prefer) in tooltips do
-                    
+                // Format multiple lines of text into a single line in the output file
+                let valuesText = 
+                    [ for (action, value) in lines do 
+                          let action = (if action = "" then "" else action + " ")
+                          let valueText = try formatValue value with e -> sprintf "??? (%s)" e.Message
+                          let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", "")
+                          let valueText = 
+                              if valueText.Length > MAXTOOLTIP then 
+                                  valueText.[0 .. MAXTOOLTIP-1] + "..."
+                              else   
+                                  valueText
+                          yield action + valueText ]
 
-                    // Only emit one line for each range. If live checks are performed twice only
-                    // the first is currently shown.  
-                    //
-                    // We have a hack here to prefer some entries over others.  FCS returns non-compiler-generated
-                    // locals for curried functions like 
-                    //     a |> ... |> foo1 
-                    // or
-                    //     a |> ... |> foo2 x
-                    //
-                    // which become 
-                    //     a |> ... |> (fun input -> foo input)
-                    //     a |> ... |> (fun input -> foo2 x input
-                    // but here a use is reported for "input" over the range of the application expression "foo1" or "foo2 x"
-                    // So we prefer the actual call over these for these ranges.
-                    //
-                    // TODO: report this FCS problem and fix it.
-                    if not (ranges.Contains(range))  && (prefer || not (havePreferred.Contains range)) then 
-                        ranges.Add(range) |> ignore
+                let line = range, valuesText
+                yield line |]
 
-                        // Format multiple lines of text into a single line in the output file
-                        let valuesText = 
-                            [ for (action, value) in lines do 
-                                  let action = (if action = "" then "" else action + " ")
-                                  let valueText = try formatValue value with e -> sprintf "??? (%s)" e.Message
-                                  let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", "")
-                                  let valueText = 
-                                      if valueText.Length > MAXTOOLTIP then 
-                                          valueText.[0 .. MAXTOOLTIP-1] + "..."
-                                      else   
-                                          valueText
-                                  yield action + valueText ]
-                            |> String.concat "\\n  " // special new-line character known by experimental VS tooling + indent
-                    
-                        let sep = (if lines.Length = 1 then " " else "\\n")
-                        let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
-                        yield line
-
-               for diag in diags do 
-                    printfn "%s" (diag.ToString())
-                    for range in diag.LocationStack do
-                        if Path.GetFullPath(range.File) = Path.GetFullPath(sourceFile) then
-                            let message = 
-                               "LiveCheck: " + diag.Message + 
-                               ([| for m in Array.rev diag.LocationStack -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
-                            let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
-                            let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
-                            let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
-                            yield line |]
-
-        emitInfoFile sourceFile lines
 
     let runEntityDeclLiveChecks(entity:DEntityDef, entityR: ResolvedEntity, methDecls: (DMemberDef * DExpr)[]) =
         // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
@@ -306,17 +257,12 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, keepRanges, liv
             [| for (_, contents) in fileConvContents do yield! contents.Code |]
         ctxt.AddDecls(allDecls)
 
-        let mutable res = Ok()
-        for (sourceFile, ds) in fileConvContents do 
-            printfn "evaluating decls.... " 
-            let diags = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
+        let infos = 
+            [| for (sourceFile, ds) in fileConvContents do 
+                printfn "evaluating decls.... " 
+                let diags = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
 
-            if writeinfo then 
-                writeInfoFile (tooltips.ToArray()) sourceFile diags
-            for diag in diags do
-                printfn "%s" (diag.ToString())
-            if diags |> Array.exists (fun diag -> diag.Severity >= 2) then res <- Error ()
-
-            printfn "...evaluated decls" 
-        res
+                let formattedTooltips = tooltips.ToArray() |> formatTooltips
+                sourceFile, diags, formattedTooltips |]
+        infos
 

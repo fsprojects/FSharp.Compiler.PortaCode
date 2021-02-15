@@ -196,3 +196,14 @@ type DDecl =
 type DFile = 
     { Code: DDecl[] }
 
+type LiveCheckRequest =
+    { OtherOptions: string[]
+      Files: (string * DFile)[]  }
+
+type LiveCheckFileResult =
+    { File: string
+      Diagnostics: DDiagnostic[]
+      Tooltips: (DRange * string list)[] }
+
+type LiveCheckResponse = 
+    { FileResults: LiveCheckFileResult[] }

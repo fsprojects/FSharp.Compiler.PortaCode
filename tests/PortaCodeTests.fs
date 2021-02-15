@@ -1,4 +1,4 @@
-module FSharp.Compiler.PortaCode.Tests.Basic
+module Tests.CodeModelInterpreter
 
 open System
 open System.IO

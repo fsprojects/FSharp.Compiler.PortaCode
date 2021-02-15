@@ -1,0 +1,41 @@
+﻿<Project>
+  <!-- See https://stackoverflow.com/questions/43921992/how-can-i-use-beforebuild-and-afterbuild-targets-with-visual-studio-2017 -->
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.2-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Analyzer.fs" />
+    
+    <!-- lay down the analyzer as a tool -->
+    <TfmSpecificPackageFile Include="bin\$(Configuration)\$(TargetFramework)\FsLive.Analyzer.dll">
+      <PackagePath>tools/fsharp41/$(TargetFramework)/FsLive.Analyzer.dll</PackagePath>
+    </TfmSpecificPackageFile>
+    <ExeToolFiles Include="..\FsLive.Cli\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
+    <TfmSpecificPackageFile Include="@(ExeToolFiles)">
+      <PackagePath>tools/fslive/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
+    </TfmSpecificPackageFile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Compiler.Service" Version="39.0.3-dev" />
+    <ProjectReference Include="..\src\FSharp.Compiler.PortaCode.fsproj" />
+    <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- We place the EXE tool in well-known locations with respect to the analyzer DLL -->
+  <Target Name="AfterBuild">
+    <Copy
+        SourceFiles="@(ExeToolFiles)"
+        DestinationFiles="@(ExeToolFiles->'bin\fslive\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+</Project>

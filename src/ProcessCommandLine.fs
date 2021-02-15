@@ -17,11 +17,14 @@ open FSharp.Compiler.Symbols
 open FSharp.Compiler.Text
 open System.Net
 open System.Text
+open System.Runtime.Serialization.Formatters.Binary
 
 let checker = FSharpChecker.Create(keepAssemblyContents = true)
 
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
+    let mutable inbin = None
+    let mutable outbin = None
     let mutable dump = false
     let mutable livecheck = false
     let mutable dyntypes = false
@@ -45,8 +48,10 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.EndsWith(".fsproj") then 
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
-                elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["----projarg:".Length ..]] 
+                elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["--projarg:".Length ..]] 
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
+                elif arg.StartsWith "--inbin:" then inbin <- Some arg.["--inbin:".Length ..]
+                elif arg.StartsWith "--outbin:" then inbin <- Some arg.["--outbin:".Length ..]
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
                 elif arg = "--livecheck" then 
@@ -234,6 +239,46 @@ let ProcessCommandLine (argv: string[]) =
         let json = Newtonsoft.Json.JsonConvert.SerializeObject(data)
         json
 
+    let emitInfoFile (sourceFile: string) lines = 
+        let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
+        let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
+        let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
+        printfn "writing info file %s..." infoFile 
+        if not (Directory.Exists infoDir) then
+           Directory.CreateDirectory infoDir |> ignore
+        try 
+            File.WriteAllLines(infoFile, lines, encoding=Encoding.Unicode)
+        finally
+            try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
+
+    /// Write an info file containing extra information to make available to F# tooling.
+    /// This is currently experimental and only experimental additions to F# tooling
+    /// watch and consume this information.
+    let writeInfoFile (formattedTooltips: (DRange * string list)[]) sourceFile (diags: DDiagnostic[]) = 
+
+        let lines = 
+            [| for (range, valuesLines) in formattedTooltips do
+                    
+                    let sep = (if valuesLines.Length = 1 then " " else "\\n")
+                    let valuesText = valuesLines |> String.concat "\\n  " // special new-line character known by experimental VS tooling + indent
+
+                    let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
+                    yield line 
+
+               for diag in diags do 
+                    printfn "%s" (diag.ToString())
+                    for range in diag.LocationStack do
+                        if Path.GetFullPath(range.File) = Path.GetFullPath(sourceFile) then
+                            let message = 
+                               "LiveCheck: " + diag.Message + 
+                               ([| for m in Array.rev diag.LocationStack -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
+                            let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
+                            let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
+                            let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
+                            yield line |]
+
+        lines
+
     let sendToWebHook (hook: string) fileContents = 
         try 
             let json = jsonFiles (Array.ofList fileContents)
@@ -266,13 +311,27 @@ let ProcessCommandLine (argv: string[]) =
 
             if not dump && webhook.IsNone then 
                 printfn "fslive: EVALUATING ALL INPUTS...." 
-                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
                 let fileConvContents = 
                     [| for i in implFiles -> 
                          let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
                          i.FileName, code |]
 
-                match evaluator.EvaluateDecls fileConvContents with
+                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, livecheck)
+                let results = evaluator.EvaluateDecls fileConvContents 
+                let mutable res = Ok()
+                for (sourceFile, diags, formattedTooltips) in results do   
+                    let info = 
+                        if writeinfo then 
+                            writeInfoFile formattedTooltips sourceFile diags
+                        else
+                            [| |]
+                    for diag in diags do
+                        printfn "%s" (diag.ToString())
+                    if diags |> Array.exists (fun diag -> diag.Severity >= 2) then res <- Error ()
+
+                    printfn "...evaluated decls" 
+                    emitInfoFile sourceFile info
+                match res with
                 | Error _ when not watch -> exit 1
                 | _ -> ()
 
@@ -292,6 +351,22 @@ let ProcessCommandLine (argv: string[]) =
     for o in options.OtherOptions do 
         printfn "compiling, option %s" o
 
+    match inbin, outbin with
+    | Some inf, Some outf ->
+        let req: LiveCheckRequest = 
+            let formatter = new BinaryFormatter()
+            use s = File.OpenRead(inf)
+            formatter.Deserialize(s) :?> _
+        let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, writeinfo=true, livecheck=true)
+        let results = evaluator.EvaluateDecls req.Files
+        let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
+        begin 
+            let formatter = new BinaryFormatter()
+            use out = File.OpenWrite(outf)
+            formatter.Serialize(out, (resp: LiveCheckResponse))
+        end
+        1
+    | _ -> 
     if watch then 
         // Send an immediate changed() event
         if webhook.IsNone then 
