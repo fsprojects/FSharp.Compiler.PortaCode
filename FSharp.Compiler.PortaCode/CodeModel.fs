@@ -190,7 +190,7 @@ and DObjectExprOverrideDef =
 
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]
-    | DDeclMember of DMemberDef * DExpr * isLiveCheck: bool
+    | DDeclMember of DMemberDef * DExpr
     | InitAction of DExpr * DRange option
 
 type DFile = 

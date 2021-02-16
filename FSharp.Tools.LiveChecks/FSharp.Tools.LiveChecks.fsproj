@@ -14,20 +14,20 @@
     <Compile Include="Analyzer.fs" />
     
     <!-- lay down the analyzer DLL in the tools/fsharp41 directory of the package, i.e. a compiler tool -->
-    <TfmSpecificPackageFile Include="bin\$(Configuration)\$(TargetFramework)\FsLive.Analyzer.dll">
-      <PackagePath>tools/fsharp41/$(TargetFramework)/FsLive.Analyzer.dll</PackagePath>
+    <TfmSpecificPackageFile Include="bin\$(Configuration)\$(TargetFramework)\FSharp.Tools.LiveChecks.dll">
+      <PackagePath>tools/fsharp41/$(TargetFramework)/FSharp.Tools.LiveChecks.dll</PackagePath>
     </TfmSpecificPackageFile>
     <!-- lay down the fslive EXE in the tools/fslive directory of the package, i.e. a subsidiary tool -->
-    <ExeToolFiles Include="..\FsLive.Cli\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
+    <ExeToolFiles Include="..\fslive\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
     <TfmSpecificPackageFile Include="@(ExeToolFiles)">
       <PackagePath>tools/fslive/netcoreapp3.1/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
     </TfmSpecificPackageFile>
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.Compiler.Service" Version="39.0.3-dev" />
-    <ProjectReference Include="..\src\FSharp.Compiler.PortaCode.fsproj" />
     <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+    <PackageReference Include="FSharp.Compiler.Service" Version="39.0.3-dev" />
+    <ProjectReference Include="..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />

@@ -472,16 +472,13 @@ type Convert(includeRanges: bool, tolerateIncomplete: bool) =
                    yield DDeclEntity (eR, declsR) 
 
            | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(v, vs, e) -> 
-               let isLiveCheck = v.Attributes |> Seq.exists (fun attr -> attr.AttributeType.LogicalName.Contains "CheckAttribute")
-               if isLiveCheck then 
-                   printfn "member %s is a LiveCheck!" v.LogicalName
                // Skip Equals, GetHashCode, CompareTo compiler-generated methods
                //if v.IsValCompiledAsMethod || not v.IsMember then
                let vR = try convMemberDef v with exn -> failwithf "error converting defn of %s\n%A" v.CompiledName exn
                let eR = try Ok (convExpr e) with exn -> Error exn
                match eR with 
                | Ok eR -> 
-                   yield DDeclMember (vR, eR, isLiveCheck)
+                   yield DDeclMember (vR, eR)
                | Error exn -> 
                    match exn with 
                    | IncompleteExpr when tolerateIncomplete -> () 

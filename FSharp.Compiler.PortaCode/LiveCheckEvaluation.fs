@@ -10,7 +10,7 @@ open System.Collections.Generic
 open System.IO
 open System.Text
 
-type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, livecheck) =
+type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck) =
 
     let mutable assemblyNameId = 0
 
@@ -113,57 +113,80 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, livecheck) =
                 let line = range, valuesText
                 yield line |]
 
+    let findLiveCheckAttr (attrs: obj[]) =
+          attrs |> Array.tryFind (fun a ->  a.GetType().Name.Contains "CheckAttribute")
 
-    let runEntityDeclLiveChecks(entity:DEntityDef, entityR: ResolvedEntity, methDecls: (DMemberDef * DExpr)[]) =
-        // If a [<LiveCheck>] attribute occurs on a type, then call the Invoke member on 
-        // the attribute type passing the target type as an attribute.
-        //
-        // When a live checking attribute is attached to a type
-        // we expect the attribute type to implement an Invoke method
-        // taking the target type and the location information related
-        // to the check for diagnostic production.
+    // Invoke the RunChecks member
+    let callRunChecks(m: DRange option, attr: obj, target: obj, methLocs: (MethodInfo * obj * (string * int * int * int * int))[]) =
+        try 
+            protectEval false m (fun () ->
+                let loc = defaultArg m { File=""; StartLine=0; StartColumn=0; EndLine=0; EndColumn=0 }
+                let args = [| target; box (loc.File, loc.StartLine, loc.StartColumn, loc.EndLine, loc.EndColumn); box methLocs;  |]
+                let res = protectInvoke (fun () -> attr.GetType().InvokeMember("RunChecks",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, attr, args))
+                let diags = 
+                    match res with 
+                    | :? (((* severity *) int * (* number *) int * ((* file *) string * int * int * int * int)[] * (* message *) string)[]) as diags -> diags
+                    | _ -> 
+                        failwith "incorrect return type from attribute Invoke"
+                [| for (severity, number, locstack, msg) in diags do
+                      let stack = 
+                          [| yield! Option.toList m
+                             for (file,sl,sc,el,ec) in locstack do
+                                { File=file; StartLine=sl; StartColumn=sc; EndLine=el; EndColumn=ec } |]
+                      { Severity=severity
+                        Number = number
+                        Message = msg 
+                        LocationStack = stack }  |])
+        with exn -> 
+            [| DiagnosticFromException exn |]
+
+    // If a [<LiveCheck>] attribute occurs on a type, then call the RunChecks member on 
+    // the attribute type passing the target type as an attribute.
+    //
+    // When a live checking attribute is attached to a type
+    // we expect the attribute type to implement an RunChecks method
+    // taking the target type and the location information related
+    // to the check for diagnostic production.
+    let runEntityDeclLiveChecks(entity:DEntityDef, entityR: ResolvedEntity, methDecls: (DMemberDef * ResolvedMember * DExpr)[]) =
         if livecheck then
             match entityR with 
             | REntity (targetType, _) -> 
-                let liveShape = 
-                    targetType.GetCustomAttributes(true) |> Array.tryFind (fun a -> 
-                        a.GetType().Name.Contains "CheckAttribute")
-                match liveShape with
+                let liveCheckAttr = findLiveCheckAttr (targetType.GetCustomAttributes(true))
+                match liveCheckAttr with
                 | None  -> [| |]
                 | Some attr -> 
                     // Grab the source locations of methods to pass to the checker for better error location reporting
                     let methLocs =
-                        [| for (membDef, _membBody) in methDecls do
-                            match membDef.Range with 
-                            | None -> ()
-                            | Some m -> 
-                                yield (membDef.Name, m.File, m.StartLine, m.StartColumn, m.EndLine, m.EndColumn)
+                        [| for (membDef, membR, _membBody) in methDecls do
+                            
+                            printfn "membDef = %A" membDef
+                            printfn "membR = %A" membR
+                            match membDef.Range, membR with 
+                            | Some m, RMethod (:? MethodInfo as minfo) -> 
+                                let liveCheckAttr2 = findLiveCheckAttr (minfo.GetCustomAttributes(true))
+                                match liveCheckAttr2 with
+                                | None -> ()
+                                | Some attr2 ->
+                                    (minfo, attr2, (m.File, m.StartLine, m.StartColumn, m.EndLine, m.EndColumn))
+                            | _ -> ()
                             |]
 
-                    let res =
-                        try 
-                            protectEval false entity.Range (fun () ->
-                                let loc = defaultArg entity.Range { File=""; StartLine=0; StartColumn=0; EndLine=0; EndColumn=0 }
-                                let args = [| box targetType; box methLocs; box loc.File; box loc.StartLine; box loc.StartColumn; box loc.EndLine; box loc.EndColumn |]
-                                let res = protectInvoke (fun () -> attr.GetType().InvokeMember("Invoke",BindingFlags.Public ||| BindingFlags.InvokeMethod ||| BindingFlags.Instance, null, attr, args))
-                                let diags = 
-                                    match res with 
-                                    | :? (((* severity *) int * (* number *) int * ((* file *) string * int * int * int * int)[] * (* message *) string)[]) as diags -> diags
-                                    | _ -> 
-                                        failwith "incorrect return type from attribute Invoke"
-                                [| for (severity, number, locstack, msg) in diags do
-                                      let stack = 
-                                         [| yield! Option.toList entity.Range
-                                            for (file,sl,sc,el,ec) in locstack do
-                                                { File=file; StartLine=sl; StartColumn=sc; EndLine=el; EndColumn=ec } |]
-                                      { Severity=severity
-                                        Number = number
-                                        Message = msg 
-                                        LocationStack = stack }  |])
-                        with exn -> 
-                            [| DiagnosticFromException exn |]
-                    res
+                    callRunChecks(entity.Range, attr, targetType, methLocs)
 
+            | _ -> [| |] 
+        else [| |]
+
+    // If a [<LiveCheck>] attribute occurs on an F# function declaration or static member in 
+    // a non-generic type, then call the RunChecks member on 
+    // the attribute type passing the target type as an attribute.
+    let runMemberDefnLiveChecks(mdef: DMemberDef, methR: ResolvedMember, _body: DExpr) =
+        if livecheck && not mdef.IsInstance then
+            match methR with 
+            | RMethod (:? MethodInfo as minfo)-> 
+                let liveCheckAttr = findLiveCheckAttr (minfo.GetCustomAttributes(true))
+                match liveCheckAttr with
+                | None  -> [| |]
+                | Some attr -> callRunChecks(mdef.Range, attr, minfo, [| |])
             | _ -> [| |] 
         else [| |]
 
@@ -189,11 +212,14 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, livecheck) =
                                         
         let tooltips = ResizeArray()
         let sink =
-            if writeinfo then 
+            if collectTooltips then 
                 { new Sink with 
 
                      member _.NotifyEstablishEntityDecl(entity, entityR, entityDecls) =
                          runEntityDeclLiveChecks(entity, entityR, entityDecls)
+
+                     member _.NotifyEstablishMemberDef(mdef, methR, body) =
+                         runMemberDefnLiveChecks(mdef, methR, body)
 
                      member __.NotifyCallAndReturn(mref, callerRange, mdef, _typeArgs, args, res) = 
                          let paramNames = 
@@ -260,7 +286,17 @@ type LiveCheckEvaluation(options: string[], dyntypes, writeinfo, livecheck) =
         let infos = 
             [| for (sourceFile, ds) in fileConvContents do 
                 printfn "evaluating decls.... " 
-                let diags = ctxt.TryEvalDecls (envEmpty, ds.Code, evalLiveChecksOnly=livecheck)
+                let selectMemberDef (membDef: DMemberDef) =
+                    let isLiveCheck =
+                        membDef.CustomAttributes |> Array.exists (fun attr -> 
+                            let (DEntityRef typeName) = attr.AttributeType
+                            typeName.Contains "CheckAttribute")
+                    (membDef.IsValueDef && not livecheck) || 
+                    (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0))
+                let selectInitAction _ =
+                    not livecheck 
+
+                let diags = ctxt.TryEvalDecls (envEmpty, ds.Code, selectMemberDef, selectInitAction)
 
                 let formattedTooltips = tooltips.ToArray() |> formatTooltips
                 sourceFile, diags, formattedTooltips |]

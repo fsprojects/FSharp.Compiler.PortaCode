@@ -3,11 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.30413.136
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FsLive.Cli", "FsLive.Cli\FsLive.Cli.fsproj", "{23640E46-E830-4AB7-9289-E527F6429435}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "fslive", "fslive\fslive.fsproj", "{23640E46-E830-4AB7-9289-E527F6429435}"
 EndProject
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FsLive.Cli.Tests", "tests\FsLive.Cli.Tests.fsproj", "{810EEB40-5042-4946-B695-5B13E9957807}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FSharp.Compiler.PortaCode.Tests", "tests\FSharp.Compiler.PortaCode.Tests\FSharp.Compiler.PortaCode.Tests.fsproj", "{810EEB40-5042-4946-B695-5B13E9957807}"
 EndProject
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FSharp.Compiler.PortaCode", "src\FSharp.Compiler.PortaCode.fsproj", "{2E0E56A3-44F1-4953-8CE5-4DBC477DBF05}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FSharp.Compiler.PortaCode", "FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj", "{2E0E56A3-44F1-4953-8CE5-4DBC477DBF05}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{569DC946-97D8-4B47-B229-38A137CD388E}"
 	ProjectSection(SolutionItems) = preProject
@@ -16,10 +16,12 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		README.md = README.md
 	EndProjectSection
 EndProject
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FsLive.Analyzer", "FsLive.Analyzer\FsLive.Analyzer.fsproj", "{794AF871-DFFA-4E4B-9729-A11A80473B60}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FSharp.Tools.LiveChecks", "FSharp.Tools.LiveChecks\FSharp.Tools.LiveChecks.fsproj", "{794AF871-DFFA-4E4B-9729-A11A80473B60}"
 	ProjectSection(ProjectDependencies) = postProject
 		{23640E46-E830-4AB7-9289-E527F6429435} = {23640E46-E830-4AB7-9289-E527F6429435}
 	EndProjectSection
+EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "FSharp.Tools.LiveChecks.Tests", "tests\FSharp.Tools.LiveChecks.Tests\FSharp.Tools.LiveChecks.Tests.fsproj", "{FBE18400-7BA6-4B84-8EF2-78D762C2A0E2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -43,6 +45,10 @@ Global
 		{794AF871-DFFA-4E4B-9729-A11A80473B60}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{794AF871-DFFA-4E4B-9729-A11A80473B60}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{794AF871-DFFA-4E4B-9729-A11A80473B60}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FBE18400-7BA6-4B84-8EF2-78D762C2A0E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FBE18400-7BA6-4B84-8EF2-78D762C2A0E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FBE18400-7BA6-4B84-8EF2-78D762C2A0E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FBE18400-7BA6-4B84-8EF2-78D762C2A0E2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

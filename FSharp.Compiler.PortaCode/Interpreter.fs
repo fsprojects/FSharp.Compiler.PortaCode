@@ -129,7 +129,11 @@ type Sink =
 
     /// Called after an enitity declaration is established.  If dynamic emit of types
     /// is enabled then the System.Type for the entity will be available in entityR
-    abstract NotifyEstablishEntityDecl: entity: DEntityDef * entityR: ResolvedEntity * memberDecls: (DMemberDef * DExpr)[] -> DDiagnostic[]
+    abstract NotifyEstablishEntityDecl: entity: DEntityDef * entityR: ResolvedEntity * memberDecls: (DMemberDef * ResolvedMember * DExpr)[] -> DDiagnostic[]
+
+    /// Called after a method declaration is established.  If dynamic emit of types
+    /// is enabled then the System.Type for the reflective MethodInfo will be available in methR
+    abstract NotifyEstablishMemberDef: memb: DMemberDef * methR: ResolvedMember * body: DExpr -> DDiagnostic[]
 
     /// Called whenever a call is completed, showing caller reference and called method
     abstract NotifyCallAndReturn: caller: DMemberRef option * callerRange: DRange option * callee: Choice<MethodInfo, DMemberDef> * typeArgs: Type[] * args: obj[] * returnValue: Value -> unit
@@ -152,6 +156,7 @@ type Sink =
 let emptySink = 
     { new Sink with 
           member _.NotifyEstablishEntityDecl(_,_,_) = [| |]
+          member _.NotifyEstablishMemberDef(_,_,_) = [| |]
           member _.NotifyCallAndReturn(_,_,_,_,_,_) = ()
           member _.NotifyBindValue(_,_) = ()
           member _.NotifySetField(_, _,_) = ()
@@ -712,13 +717,13 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         UMethod (membDef, minfo)
 
     /// Resolve a method name to a lambda value
-    let resolveMethod (v: DMemberRef) (range: DRange option) = 
+    let resolveMethod preferMethInfo (v: DMemberRef) (range: DRange option) = 
         // TODO: create formal type environment to help resolve overloading by type
         let formalEnv = envEmpty 
         
         match resolveEntity v.Entity with 
         // We call the actual method when the thing is a compiled type or we're calling a shell type constructor
-        | (REntity (entityType, isShell) as entityR) when not isShell || v.Name = ".ctor" || isAbstractSlot (formalEnv, entityR, v) -> 
+        | (REntity (entityType, isShell) as entityR) when not isShell || preferMethInfo || v.Name = ".ctor" || isAbstractSlot (formalEnv, entityR, v) -> 
             let n = v.ArgTypes.Length
             if v.Name = ".ctor" || v.Name = ".cctor" then 
                 match entityType.GetConstructors(bindAll) |> Array.filter (fun m -> m.Name = v.Name && m.GetParameters().Length = n) with 
@@ -917,7 +922,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                 match shellTypeConstructorBuilders.TryGetValue(ctorRef) with 
                 | true, (v, _) -> (v :> ConstructorInfo)
                 | _ -> 
-                match resolveMethod ctorRef range with
+                match resolveMethod true ctorRef range with
                 | RMethod (:? ConstructorInfo as ctor) -> ctor
                 | _ -> failwith "unexpected: couldn't resolve ctor"
 
@@ -1007,7 +1012,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                     //    let cattr = CustomAttributeBuilder(c, [| SourceConstructFlags.RecordType|])
                     //    typB.SetCustomAttribute(cattr)
                     phase3(subDecls)
-                | DDeclMember (membDef, _body, _isLiveCheck) when canEmitShellMethod membDef ->
+                | DDeclMember (membDef, _body) when canEmitShellMethod membDef ->
                     let membRef = membDef.Ref
                     let entityDef = shellTypeEntityInfo.[membDef.EnclosingEntity]
                     let typB, env  = enterTypeDef entityDef
@@ -1129,7 +1134,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         let typB, _env  = enterTypeDef entityDef
                         buildCustomAttributes entityDef.Range entityDef.CustomAttributes typB.SetCustomAttribute 
                     phase4(subDecls)
-                | DDeclMember (membDef, body, _isLiveCheck) when canEmitShellMethod membDef -> 
+                | DDeclMember (membDef, body) when canEmitShellMethod membDef -> 
                     let membRef = membDef.Ref
                     let entityDef = shellTypeEntityInfo.[membDef.EnclosingEntity]
                     let typB, env  = enterTypeDef entityDef
@@ -1159,7 +1164,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                             | true, (v, baseCtorParamTypes) -> 
                                 ((v :> ConstructorInfo), baseCtorParamTypes)
                             | _ -> 
-                            match resolveMethod baseCtor membDef.Range with
+                            match resolveMethod true baseCtor membDef.Range with
                             | RMethod (:? ConstructorInfo as baseCtorInfo) -> 
                                 baseCtorInfo, (baseCtorInfo.GetParameters() |> Array.map (fun p -> p.ParameterType))
                             | _ -> failwith "unexpected: couldn't resolve ctor"
@@ -1194,7 +1199,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                                 match shellTypeMethodBuilders.TryGetValue(slot.Member) with 
                                 | true, (v, _, _) -> (v :> MethodInfo)
                                 | _ -> 
-                                match resolveMethod slot.Member membDef.Range  with 
+                                match resolveMethod true slot.Member membDef.Range  with 
                                 | RMethod (:? MethodInfo as minfo) -> minfo
                                 | _ -> failwith "unexpected: couldn't resolve slot"
                             let (RTypeErased env slotDeclType) = resolveType (env, slot.DeclaringType)
@@ -1244,7 +1249,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                         dispatchSlots.[(ty, membDef.Name, paramTypesR)] <- true
                     loop subDecls
 
-                | DDeclMember (membDef, body, _isLiveCheck) -> 
+                | DDeclMember (membDef, body) -> 
                     let ty = resolveEntity(membDef.EnclosingEntity)
                     let paramTypes = membDef.Parameters |> Array.map (fun p -> p.LocalType) 
                     let paramTypesR = resolveTypes(env, paramTypes) 
@@ -1287,40 +1292,40 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
         with exn -> 
             exn |> Error
 
-    /// Try to evaluate the declarations, collecting errors and optimisitically continuing
-    /// as we go.  Optionally evaluate only the ones marked with the [<LiveCheck>] attribute,
-    /// in which case execution is done on-demand.
-    member ctxt.TryEvalDecls(env, decls: DDecl[], ?evalLiveChecksOnly: bool) = 
-        let evalLiveChecksOnly = defaultArg evalLiveChecksOnly false
+    /// Try to evaluate the selected declarations, collecting errors and optimisitically continuing
+    /// as we go.  
+    member ctxt.TryEvalDecls(env, decls: DDecl[], ?selectMember: (DMemberDef -> bool), ?selectInitAction) = 
+        let selectMember = defaultArg selectMember (fun membDef -> membDef.IsValueDef)  
+        let selectInitAction = defaultArg selectInitAction (fun _ -> true)
         let rec loop decls = 
             [| for d in decls do
                 match d with 
                 | DDeclEntity (entity, subDecls) -> 
+                    yield! loop subDecls
+
+                    // call NotifyEstablishEntityDecl
                     let entityR = resolveEntity (entity.Ref)
                     match entityR with
                     | REntity (targetType, _) ->
                         let entityDecls =
                             [| for  meth in decls do
                                 match meth with 
-                                | DDeclMember (membDef, _body, _isLiveCheck) -> 
-                                    match meth with 
-                                    | DDeclMember (membDef, body, isLiveCheck) -> 
-                                        let methParent = resolveEntity(membDef.EnclosingEntity)
-                                        match methParent with 
-                                        | REntity (targetType2, _) when targetType = targetType2 -> 
-                                            yield membDef, body
-                                        | _ -> ()
+                                | DDeclMember (membDef, body) -> 
+                                    let methParent = resolveEntity(membDef.EnclosingEntity)
+                                    let methR = resolveMethod true membDef.Ref membDef.Range
+                                    match methParent with 
+                                    | REntity (targetType2, _) when targetType = targetType2 -> 
+                                        yield membDef, methR, body
                                     | _ -> ()
                                 | _ -> ()
                                         
                             |]
                         yield! sink.NotifyEstablishEntityDecl(entity, entityR, entityDecls)
                     | _ -> ()
-                    yield! loop subDecls
 
-                | DDeclMember (membDef, body, isLiveCheck) -> 
-                    if (membDef.IsValueDef && not evalLiveChecksOnly) || 
-                       (isLiveCheck && (membDef.IsValueDef || membDef.Parameters.Length = 0)) then 
+                | DDeclMember (membDef, body) -> 
+                    // Evaluate if selected
+                    if selectMember membDef then 
                         let ty = resolveEntity(membDef.EnclosingEntity)
                         let res = ctxt.TryEvalExpr (env, body, membDef.Range)
                         match res with 
@@ -1329,9 +1334,14 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
                             methodThunks.[(ty, membDef.Name, RTypes [| |])] <- (membDef, res)
                         | Error err -> 
                             yield DiagnosticFromException err 
+                    
+                    // Call NotifyEstablishMemberDef
+                    let methR = resolveMethod true membDef.Ref membDef.Range
+                    yield! sink.NotifyEstablishMemberDef(membDef, methR, body)
 
                 | DDecl.InitAction (expr, range) -> 
-                    if not evalLiveChecksOnly then 
+                    // Evaluate if selected
+                    if selectInitAction (expr, range) then 
                         let res = ctxt.TryEvalExpr (env, expr, range) 
                         match res with 
                         | Ok res -> 
@@ -1346,7 +1356,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             match d with 
             | DDeclEntity (_e, subDecls) -> 
                 ctxt.EvalDecls(env, subDecls)
-            | DDeclMember (membDef, body, _isLiveCheck) -> 
+            | DDeclMember (membDef, body) -> 
                 if membDef.IsValueDef then 
                     let ty = resolveEntity(membDef.EnclosingEntity)
                     let res = ctxt.EvalExpr (env, body) 
@@ -1581,7 +1591,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
     member ctxt.EvalNewObject(env, objCtor, typeArgs, argExprs, range) =
         let argsV = ctxt.EvalExprs(env, argExprs)
         let typeArgsR = resolveTypes (env, typeArgs)
-        let methR = resolveMethod objCtor range
+        let methR = resolveMethod false objCtor range
 
         match methR, typeArgsR with 
         | RMethod (:? ConstructorInfo as cinfo), RTypesErased env typeArgsV -> 
@@ -1647,7 +1657,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
     member ctxt.EvalCall(env, objExprOpt, membRef, typeArgs1, typeArgs2, argExprs, range) =
         let objOptV = ctxt.EvalExprOpt (env, objExprOpt)
         let argsV = ctxt.EvalExprs (env, argExprs)
-        let methR = resolveMethod membRef range
+        let methR = resolveMethod false membRef range
 
         // These primitives don't have dynamic invocation implementations
         match methR with 
@@ -1942,7 +1952,7 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
             match firstExpr with 
             | DExpr.Call(_, memberOrFunc, _, _, _, _)
             | DExpr.NewObject(memberOrFunc, _, _, _) -> 
-                let methR = resolveMethod memberOrFunc range
+                let methR = resolveMethod false memberOrFunc range
                 match methR with
                 | RMethod (:? ConstructorInfo) -> 
                     match env.Vals.TryGetValue "$this" with 
@@ -2065,4 +2075,4 @@ type EvalContext (assemblyName: AssemblyName, ?dyntypes: bool, ?assemblyResolver
     member _.ResolveEntity entityRef = resolveEntity entityRef
 
     /// Resolve a method name to a lambda value
-    member _.ResolveMethod (v: DMemberRef) = resolveMethod v
+    member _.ResolveMethod (v: DMemberRef) = resolveMethod true v

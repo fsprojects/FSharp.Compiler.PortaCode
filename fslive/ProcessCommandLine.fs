@@ -8,8 +8,6 @@ open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
 open FSharp.Compiler.PortaCode.FromCompilerService
 open System
-open System.Reflection
-open System.Collections.Generic
 open System.IO
 open FSharp.Compiler.CodeAnalysis
 open FSharp.Compiler.Diagnostics
@@ -28,8 +26,6 @@ let ProcessCommandLine (argv: string[]) =
     let mutable livecheck = false
     let mutable dyntypes = false
     let mutable watch = true
-    let mutable useEditFiles = false
-    let mutable writeinfo = true
     let mutable webhook = None
     let mutable otherFlags = []
     let mutable msbuildArgs = []
@@ -52,19 +48,10 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg = "--daemon" then daemon <- true
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
-                elif arg = "--livecheck" then 
-                    dyntypes <- true
-                    livecheck <- true
-                    writeinfo <- true
-                    //useEditFiles <- true
                 elif arg = "--enablelivechecks" then 
                     livecheck <- true
-                elif arg = "--useeditfles" then 
-                    useEditFiles <- true
                 elif arg = "--dyntypes" then 
                     dyntypes <- true
-                elif arg = "--writeinfo" then 
-                    writeinfo <- true
                 elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
@@ -90,43 +77,21 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "   --send            Equivalent to --send:%s" defaultUrl
                    printfn "   --projarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
                    printfn "   --dump            Dump the contents to console after each update"
-                   printfn "   --livecheck       Only evaluate those with a *CheckAttribute (e.g. LiveCheck or ShapeCheck)"
+                   printfn "   --enablelivechecks  Only evaluate those with a *CheckAttribute (e.g. LiveCheck or ShapeCheck)"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
-                   printfn "                     Also write an info file based on results of evaluation."
-                   printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"
                    printfn "   --dyntypes      Dynamically compile and load so full .NET types exist"
+                   printfn "   --daemon        Run in daemon mode used by FSharp.Tools.LiveChecks analyzer"
                    printfn "   <other-args>      All other args are assumed to be extra F# command line arguments, e.g. --define:FOO"
                    exit 1
                 else yield arg  |]
 
-    let editDirAndFile (fileName: string) =
-        assert useEditFiles
-        let infoDir = Path.Combine(Path.GetDirectoryName fileName,".fsharp")
-        let editFile = Path.Combine(infoDir,Path.GetFileName fileName + ".edit")
-        if not (Directory.Exists infoDir) then 
-            Directory.CreateDirectory infoDir |> ignore
-        infoDir, editFile
-
-    let readFile (fileName: string) = 
-        if useEditFiles && watch then 
-            let infoDir, editFile = editDirAndFile fileName
-            let preferEditFile =
-                try 
-                    Directory.Exists infoDir && File.Exists editFile && File.Exists fileName && File.GetLastWriteTime(editFile) > File.GetLastWriteTime(fileName)
-                with _ -> 
-                    false
-            if preferEditFile then 
-                printfn "*** preferring %s to %s ***" editFile fileName
-                File.ReadAllText editFile
-            else
-                File.ReadAllText fileName
-        else
-            File.ReadAllText fileName
+    let readFile (fileName: string) = File.ReadAllText fileName
 
     if daemon then
         while true do
             let line = Console.ReadLine()
             printfn $"fslive: got input {line}"
+            printfn $"fslive: sizeof<nativeint> = {sizeof<nativeint>}"
             if line.StartsWith("REQUEST") then
                 let parts = line.Split([| ' ' |], StringSplitOptions.RemoveEmptyEntries)
                 let inf = parts.[1]
@@ -137,7 +102,7 @@ let ProcessCommandLine (argv: string[]) =
                     use s = File.OpenRead(inf)
                     formatter.Deserialize(s) :?> _
                 printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
-                let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, writeinfo=true, livecheck=true)
+                let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, collectTooltips=true, livecheck=true)
                 let results = evaluator.EvaluateDecls req.Files
                 printfn $"fslive: results = %A{results}"
                 let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
@@ -275,34 +240,6 @@ let ProcessCommandLine (argv: string[]) =
         finally
             try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
 
-    /// Write an info file containing extra information to make available to F# tooling.
-    /// This is currently experimental and only experimental additions to F# tooling
-    /// watch and consume this information.
-    let writeInfoFile (formattedTooltips: (DRange * string list)[]) sourceFile (diags: DDiagnostic[]) = 
-
-        let lines = 
-            [| for (range, valuesLines) in formattedTooltips do
-                    
-                    let sep = (if valuesLines.Length = 1 then " " else "\\n")
-                    let valuesText = valuesLines |> String.concat "\\n  " // special new-line character known by experimental VS tooling + indent
-
-                    let line = sprintf "ToolTip\t%d\t%d\t%d\t%d\tLiveCheck:%s%s" range.StartLine range.StartColumn range.EndLine range.EndColumn sep valuesText
-                    yield line 
-
-               for diag in diags do 
-                    printfn "%s" (diag.ToString())
-                    for range in diag.LocationStack do
-                        if Path.GetFullPath(range.File) = Path.GetFullPath(sourceFile) then
-                            let message = 
-                               "LiveCheck: " + diag.Message + 
-                               ([| for m in Array.rev diag.LocationStack -> sprintf "\n  stack: (%d,%d)-(%d,%d) %s" m.StartLine m.StartColumn m.EndLine m.EndColumn m.File |] |> String.concat "")
-                            let message = message.Replace("\t"," ").Replace("\r","").Replace("\n","\\n") 
-                            let sev = match diag.Severity with 0 | 1 -> "warning" | _ -> "error"
-                            let line = sprintf "Error\t%d\t%d\t%d\t%d\t%s\t%s\t%d" range.StartLine range.StartColumn range.EndLine range.EndColumn sev message diag.Number
-                            yield line |]
-
-        lines
-
     let sendToWebHook (hook: string) fileContents = 
         try 
             let json = jsonFiles (Array.ofList fileContents)
@@ -340,15 +277,11 @@ let ProcessCommandLine (argv: string[]) =
                          let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
                          i.FileName, code |]
 
-                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, livecheck)
+                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, livecheck=livecheck, collectTooltips=false)
                 let results = evaluator.EvaluateDecls fileConvContents 
                 let mutable res = Ok()
                 for (sourceFile, diags, formattedTooltips) in results do   
-                    let info = 
-                        if writeinfo then 
-                            writeInfoFile formattedTooltips sourceFile diags
-                        else
-                            [| |]
+                    let info = [| |]
                     for diag in diags do
                         printfn "%s" (diag.ToString())
                     if diags |> Array.exists (fun diag -> diag.Severity >= 2) then res <- Error ()
@@ -403,9 +336,7 @@ let ProcessCommandLine (argv: string[]) =
 
         let watchers = 
             [ for sourceFile in options.SourceFiles do
-                yield mkWatcher sourceFile
-                if useEditFiles then 
-                    yield mkWatcher sourceFile ]
+                yield mkWatcher sourceFile ]
 
         for watcher in watchers do
             watcher.EnableRaisingEvents <- true

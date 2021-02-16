@@ -1,6 +1,27 @@
 # FSharp.Compiler.PortaCode
 
-An F# code format and corresponding interpreter. 
+This repository contains a set of related tools:
+
+#### FSharp.Compiler.PortaCode
+
+- A serializable and interpretable F# code format
+- A corresponding interpreter
+- A converter for this code format from FSharp.Compiler.Service assembly contents
+- Logic to drive the interpreter in "live checking" mode
+
+#### fslive
+
+- A `dotnet` command line tool for receiving code and interpreting it
+
+#### FSharp.Tools.LiveChecks
+
+- An F# analyzer for automatically running live checks in the IDE and compiler
+
+- Runs `fslive` from the analyzer
+
+- `fslive` looks for code annotated with `*CheckAttribute` and executes it, invoking back to the attribute for further analysis
+
+# Notes
 
 * Currently distributed by source inclusion or 'fslive' tool, no nuget package yet
 
@@ -69,16 +90,16 @@ Arguments:
 
 * A LiveCheck is a declaration like this: https://github.com/fsprojects/TensorFlow.FSharp/blob/master/examples/NeuralStyleTransfer-dsl.fsx#L109 …
 
-* The attribute indicates the intent that that specific piece of code (and anything it
-  depends on) should be run at development time.
+* The attribute indicates the intent that that specific piece of code (and anything it depends on) should be run at development time.
 
-* An example tool is the "fslive.exe" tool from this repo here https://github.com/fsprojects/FSharp.Compiler.PortaCode/blob/master/src/ProcessCommandLine.fs#L46.
-  Like FsAutoComplete this watches for project changes and then recompiles using FCS and looks for LiveCheck attributes.  It then interprets those evaluations
-  using reflection and collects information about the execution.  For example, it detects errors and detects when variables have been bound to particular values
-  during interpretation.  The tool currently emits a ".fsharp/file.fsx.info" file containing extra information about the file "file.fsx" - extra error messages
-  and extra tooltips.  An experimenta  FCS modification notices the existence of this file and incorporates the added information into Intellisense results. This
-  keeps the checker tool totally decoupled from the IDE tooling.  
+* This functionality is configured as a prototype [F# Analyzer](https://github.com/fsharp/fslang-design/blob/master/tooling/FST-1033-analyzers.md).  
 
-* This functionality may one day be reconfigured to be an [F# Analyzer](https://medium.com/lambda-factory/introducing-f-analyzers-772487889429).  
- 
+  Requires branch feature/analyzers from dotnet/fsharp
+
+  Example invocations
+
+      c:\GitHub\dsyme\fsharp\artifacts\bin\fsc\Debug\net472\fsc.exe --compilertool:FSharp.Tools.LiveChecks\bin\Debug\netstandard2.0\FSharp.Tools.LiveChecks.dll tests\test.fsx
+
+      #compilertool @"e:\GitHub\dsyme\FSharp.Compiler.PortaCode\FSharp.Tools.LiveChecks\bin\Debug\netstandard2.0\FSharp.Tools.LiveChecks.dll"
+
 
