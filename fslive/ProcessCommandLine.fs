@@ -101,11 +101,14 @@ let ProcessCommandLine (argv: string[]) =
                     let formatter = new BinaryFormatter()
                     use s = File.OpenRead(inf)
                     formatter.Deserialize(s) :?> _
-                printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
+                //printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
                 let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, collectTooltips=true, livecheck=true)
                 let results = evaluator.EvaluateDecls req.Files
-                printfn $"fslive: results = %A{results}"
                 let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
+                printfn "fslive: %d diagnostics and %d tooltips" (resp.FileResults |> Array.sumBy (fun f -> f.Diagnostics.Length)) (resp.FileResults |> Array.sumBy (fun f -> f.Tooltips.Length))
+                for f in resp.FileResults do
+                    for d in f.Diagnostics do
+                       printfn "fslive: %s" (d.ToString())
                 begin 
                     let formatter = new BinaryFormatter()
                     printfn $"fslive: serializing result to {outf}"

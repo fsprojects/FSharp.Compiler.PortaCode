@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <TargetFramework>net5.0</TargetFramework>
         <DefineConstants>$(DefineConstants);NETSTANDARD2_0</DefineConstants>
         <IsPackable>true</IsPackable>
         <PackAsTool>true</PackAsTool>
@@ -16,7 +16,7 @@
         <PackageTags>Tool;CLI</PackageTags>
     </PropertyGroup>
     <ItemGroup>
-      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.2-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
+      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
     </ItemGroup>
     <ItemGroup>
       <Compile Include="ProjectCracker.fs" />
@@ -27,7 +27,7 @@
         <ProjectReference Include="..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
 
         <!-- References used indirectly by FCS when compiling tests -->
-        <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
         <!--
         <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
         <PackageReference Include="NETStandard.Library" Version="2.0.3" />

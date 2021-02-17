@@ -2,13 +2,13 @@
      <!-- See https://stackoverflow.com/questions/43921992/how-can-i-use-beforebuild-and-afterbuild-targets-with-visual-studio-2017 -->
     <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
     <PropertyGroup>
-        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <TargetFramework>net5.0</TargetFramework>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
         <DefineConstants>$(DefineConstants);NETSTANDARD2_0;TEST</DefineConstants>
     </PropertyGroup>
     <ItemGroup>
-      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.2-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
+      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
     </ItemGroup>
     <ItemGroup>
         <Compile Include="LiveCheckTests.fs" />
@@ -21,20 +21,20 @@
         <PackageReference Include="NUnit3TestAdapter" Version="3.11.2" />
       
         <!-- References used indirectly by FCS when compiling tests -->
-        <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
         <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
         <PackageReference Include="NETStandard.Library" Version="2.0.3" />
         <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />
         <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.3.0" />
     </ItemGroup>
   <ItemGroup>
-    <ExeToolFiles Include="..\..\fslive\bin\$(Configuration)\netcoreapp3.1\**\*.*" />
+    <ExeToolFiles Include="..\..\fslive\bin\$(Configuration)\net5.0\**\*.*" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 
   <!-- For testing purposes we place the fslive EXE in well-known locations with respect to the analyzer DLL -->
   <Target Name="AfterBuild">
-    <Copy SourceFiles="@(ExeToolFiles)" DestinationFiles="@(ExeToolFiles->'bin\fslive\netcoreapp3.1\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(ExeToolFiles)" DestinationFiles="@(ExeToolFiles->'bin\fslive\net5.0\%(RecursiveDir)%(Filename)%(Extension)')" />
   </Target>
 
 </Project>

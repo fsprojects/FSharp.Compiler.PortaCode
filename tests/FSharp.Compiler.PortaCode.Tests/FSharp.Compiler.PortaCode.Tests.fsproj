@@ -2,14 +2,14 @@
      <!-- See https://stackoverflow.com/questions/43921992/how-can-i-use-beforebuild-and-afterbuild-targets-with-visual-studio-2017 -->
     <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
     <PropertyGroup>
-        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <TargetFramework>net5.0</TargetFramework>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
         <DefineConstants>$(DefineConstants);NETSTANDARD2_0;TEST</DefineConstants>
       <PlatformTarget>x64</PlatformTarget>
     </PropertyGroup>
     <ItemGroup>
-      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.2-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
+      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
     </ItemGroup>
     <ItemGroup>
         <Compile Include="PortaCodeTests.fs" />
@@ -22,7 +22,7 @@
         <PackageReference Include="NUnit3TestAdapter" Version="3.11.2" />
       
         <!-- References used indirectly by FCS when compiling tests -->
-        <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
         <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
         <PackageReference Include="NETStandard.Library" Version="2.0.3" />
         <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />

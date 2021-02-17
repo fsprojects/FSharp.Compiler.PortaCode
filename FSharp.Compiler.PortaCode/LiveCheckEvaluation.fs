@@ -159,8 +159,6 @@ type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck
                     let methLocs =
                         [| for (membDef, membR, _membBody) in methDecls do
                             
-                            printfn "membDef = %A" membDef
-                            printfn "membR = %A" membR
                             match membDef.Range, membR with 
                             | Some m, RMethod (:? MethodInfo as minfo) -> 
                                 let liveCheckAttr2 = findLiveCheckAttr (minfo.GetCustomAttributes(true))

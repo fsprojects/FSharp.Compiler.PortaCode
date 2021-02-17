@@ -25,12 +25,12 @@ type TempFile() =
 [<AnalyzerAttribute>]
 type LiveCheckAnalyzer(ctxt) = 
     inherit FSharpAnalyzer(ctxt)
-    do printfn "makign analyzer"
+    do printfn "FsLive.Tools.LiveCheckAnalyzer: creating LiveCheckAnalyzer"
 
     let mutable savedTooltips = [| |]
     static let p =
       lazy
-        let path = Path.Combine(Path.GetDirectoryName(typeof<LiveCheckAnalyzer>.Assembly.Location), "../../fslive/netcoreapp3.1/fslive.dll")
+        let path = Path.Combine(Path.GetDirectoryName(typeof<LiveCheckAnalyzer>.Assembly.Location), "../../fslive/net5.0/fslive.dll")
         let pw6432 = Environment.GetEnvironmentVariable("ProgramW6432")
         let psi = 
             ProcessStartInfo(
@@ -41,7 +41,7 @@ type LiveCheckAnalyzer(ctxt) =
                 RedirectStandardOutput = true,
                 WorkingDirectory = Path.GetTempPath(),
                 Arguments = $"\"{path}\" --daemon")
-        printfn $"starting \"{psi.FileName}\" {psi.Arguments}"
+        printfn $"FsLive.Tools.LiveCheckAnalyzer: starting \"{psi.FileName}\" {psi.Arguments}"
         let p = Process.Start(psi)
         System.AppDomain.CurrentDomain.ProcessExit.Add(fun _ -> try p.Kill() with _ -> ())
         p
