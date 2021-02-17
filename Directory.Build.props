@@ -1,0 +1,18 @@
+<Project>
+
+  <PropertyGroup>
+
+    <RestoreSources>https://api.nuget.org/v3/index.json</RestoreSources>
+    <!-- F# local build packages -->
+    <!--     C:\GitHub\dsyme\fsharp>.\build -pack -->
+    <RestoreSources Condition="Exists('C:\GitHub\dsyme\fsharp\artifacts\packages\Debug\Shipping')">
+      $(RestoreSources);C:\GitHub\dsyme\fsharp\artifacts\packages\Debug\Shipping;
+    </RestoreSources>
+
+    <RestoreSources Condition="Exists('C:\GitHub\dsyme\fsharp\artifacts\packages\Release\Shipping')">
+      $(RestoreSources);C:\GitHub\dsyme\fsharp\artifacts\packages\Release\Shipping;
+    </RestoreSources>
+
+  </PropertyGroup>
+
+</Project>

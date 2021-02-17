@@ -1,10 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <TargetFramework>net5.0</TargetFramework>
         <DefineConstants>$(DefineConstants);NETSTANDARD2_0</DefineConstants>
         <IsPackable>true</IsPackable>
         <PackAsTool>true</PackAsTool>
+        <RollForward>LatestMajor</RollForward>
         <AssemblyName>fslive</AssemblyName>
         <PackageOutputPath>./nupkg</PackageOutputPath>
         <PlatformTarget>x64</PlatformTarget>
@@ -15,16 +16,21 @@
         <PackageTags>Tool;CLI</PackageTags>
     </PropertyGroup>
     <ItemGroup>
-        <Compile Include="fslive.fs" />
+      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\src\FSharp.Compiler.PortaCode.fsproj" />
+      <Compile Include="fslive.fs" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
 
         <!-- References used indirectly by FCS when compiling tests -->
-        <PackageReference Update="FSharp.Core" Version="5.0.2-dev" />
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
+        <!--
         <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
-        <PackageReference Include="NETStandard.Library" Version="2.0.3"  />
-        <PackageReference Include="System.Reflection.Emit.ILGeneration"  Version="4.3.0" />
-        <PackageReference Include="System.Reflection.Emit.Lightweight"  Version="4.3.0" />
+        <PackageReference Include="NETStandard.Library" Version="2.0.3" />
+        <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />
+        <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.3.0" />
+        -->
     </ItemGroup>
 </Project>

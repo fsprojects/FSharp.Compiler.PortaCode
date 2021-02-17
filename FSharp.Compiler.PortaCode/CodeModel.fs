@@ -190,9 +190,30 @@ and DObjectExprOverrideDef =
 
 type DDecl = 
     | DDeclEntity of DEntityDef * DDecl[]
-    | DDeclMember of DMemberDef * DExpr * isLiveCheck: bool
+    | DDeclMember of DMemberDef * DExpr
     | InitAction of DExpr * DRange option
 
 type DFile = 
     { Code: DDecl[] }
 
+type LiveCheckResultTaggedText =
+    { Text: string
+      NavigateToFile: DRange option
+      NavigateToLink: string option
+      Tag: string }
+
+type LiveCheckResultTooltip =
+    { Location: DRange
+      Lines: LiveCheckResultTaggedText[][] }
+
+type LiveCheckRequest =
+    { OtherOptions: string[]
+      Files: (string * DFile)[]  }
+
+type LiveCheckFileResult =
+    { File: string
+      Diagnostics: DDiagnostic[]
+      Tooltips: LiveCheckResultTooltip[] }
+
+type LiveCheckResponse = 
+    { FileResults: LiveCheckFileResult[] }

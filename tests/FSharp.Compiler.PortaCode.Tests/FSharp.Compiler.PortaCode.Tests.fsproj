@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <OutputType>Library</OutputType>
+        <IsPackable>false</IsPackable>
+        <PlatformTarget>x64</PlatformTarget>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Include="PortaCodeTests.fs" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.8.3" />
+        <PackageReference Include="FsUnit" Version="3.4.0" />
+        <PackageReference Include="NUnit3TestAdapter" Version="3.17.0" />
+      
+        <!-- References used indirectly by FCS when compiling tests -->
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
+        <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
+        <PackageReference Include="NETStandard.Library" Version="2.0.3" />
+        <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />
+        <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.3.0" />
+    </ItemGroup>
+
+</Project>

@@ -4,12 +4,12 @@
 
 module FSharp.Compiler.PortaCode.ProcessCommandLine
 
+#nowarn "44"
+
 open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
 open FSharp.Compiler.PortaCode.FromCompilerService
 open System
-open System.Reflection
-open System.Collections.Generic
 open System.IO
 open FSharp.Compiler.CodeAnalysis
 open FSharp.Compiler.Diagnostics
@@ -17,17 +17,17 @@ open FSharp.Compiler.Symbols
 open FSharp.Compiler.Text
 open System.Net
 open System.Text
+open System.Runtime.Serialization.Formatters.Binary
 
 let checker = FSharpChecker.Create(keepAssemblyContents = true)
 
 let ProcessCommandLine (argv: string[]) =
     let mutable fsproj = None
+    let mutable daemon = false
     let mutable dump = false
     let mutable livecheck = false
     let mutable dyntypes = false
     let mutable watch = true
-    let mutable useEditFiles = false
-    let mutable writeinfo = true
     let mutable webhook = None
     let mutable otherFlags = []
     let mutable msbuildArgs = []
@@ -45,23 +45,15 @@ let ProcessCommandLine (argv: string[]) =
                 elif arg.EndsWith(".fsproj") then 
                     fsproj <- Some arg
                 elif arg = "--" then haveDashes <- true
-                elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["----projarg:".Length ..]] 
+                elif arg.StartsWith "--projarg:" then msbuildArgs <- msbuildArgs @ [ arg.["--projarg:".Length ..]] 
                 elif arg.StartsWith "--define:" then otherFlags <- otherFlags @ [ arg ]
+                elif arg = "--daemon" then daemon <- true
                 elif arg = "--once" then watch <- false
                 elif arg = "--dump" then dump <- true
-                elif arg = "--livecheck" then 
-                    dyntypes <- true
-                    livecheck <- true
-                    writeinfo <- true
-                    //useEditFiles <- true
                 elif arg = "--enablelivechecks" then 
                     livecheck <- true
-                elif arg = "--useeditfles" then 
-                    useEditFiles <- true
                 elif arg = "--dyntypes" then 
                     dyntypes <- true
-                elif arg = "--writeinfo" then 
-                    writeinfo <- true
                 elif arg.StartsWith "--send:" then webhook  <- Some arg.["--send:".Length ..]
                 elif arg = "--send" then webhook  <- Some defaultUrl
                 elif arg = "--version" then 
@@ -87,16 +79,53 @@ let ProcessCommandLine (argv: string[]) =
                    printfn "   --send            Equivalent to --send:%s" defaultUrl
                    printfn "   --projarg:arg  An MSBuild argument e.g. /p:Configuration=Release"
                    printfn "   --dump            Dump the contents to console after each update"
-                   printfn "   --livecheck       Only evaluate those with a *CheckAttribute (e.g. LiveCheck or ShapeCheck)"
+                   printfn "   --enablelivechecks  Only evaluate those with a *CheckAttribute (e.g. LiveCheck or ShapeCheck)"
                    printfn "                     This uses on-demand execution semantics for top-level declarations"
-                   printfn "                     Also write an info file based on results of evaluation."
-                   printfn "                     Also watch for .fsharp/foo.fsx.edit files and use the contents of those in preference to the source file"
                    printfn "   --dyntypes      Dynamically compile and load so full .NET types exist"
+                   printfn "   --daemon        Run in daemon mode used by FSharp.Tools.LiveChecks analyzer"
                    printfn "   <other-args>      All other args are assumed to be extra F# command line arguments, e.g. --define:FOO"
                    exit 1
                 else yield arg  |]
 
-    if fsharpArgs.Length = 0 && fsproj.IsNone then 
+    let readFile (fileName: string) = File.ReadAllText fileName
+
+    if daemon then
+        while true do
+            let line = Console.ReadLine()
+            printfn $"fslive: got input {line}"
+            printfn $"fslive: sizeof<nativeint> = {sizeof<nativeint>}"
+            if line.StartsWith("REQUEST") then
+                let parts = line.Split([| ' ' |], StringSplitOptions.RemoveEmptyEntries)
+                let inf = parts.[1]
+                let outf = parts.[2]
+                let req: LiveCheckRequest = 
+                    printfn $"fslive: reading input from {inf}"
+                    let formatter = new BinaryFormatter()
+                    use s = File.OpenRead(inf)
+                    formatter.Deserialize(s) :?> _
+                //printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
+                let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, collectTooltips=true, livecheck=true)
+                let results = evaluator.EvaluateDecls req.Files
+                let resp =
+                    { FileResults = 
+                         [| for (f,diags,tt) in results -> 
+                             { File=f
+                               Diagnostics=diags
+                               Tooltips= tt } |] }
+
+                printfn "fslive: %d diagnostics and %d tooltips" (resp.FileResults |> Array.sumBy (fun f -> f.Diagnostics.Length)) (resp.FileResults |> Array.sumBy (fun f -> f.Tooltips.Length))
+                for f in resp.FileResults do
+                    for d in f.Diagnostics do
+                       printfn "fslive: %s" (d.ToString())
+                begin 
+                    let formatter = new BinaryFormatter()
+                    printfn $"fslive: serializing result to {outf}"
+                    use out = File.OpenWrite(outf)
+                    formatter.Serialize(out, (resp: LiveCheckResponse))
+                end
+                printfn $"RESPONSE {inf} {outf}"
+
+    elif fsharpArgs.Length = 0 && fsproj.IsNone then 
         match Seq.toList (Directory.EnumerateFiles(Environment.CurrentDirectory, "*.fsproj")) with 
         | [ ] -> 
             failwithf "no project file found, no compilation arguments given and no project file found in \"%s\"" Environment.CurrentDirectory 
@@ -105,30 +134,6 @@ let ProcessCommandLine (argv: string[]) =
             fsproj <- Some file
         | file1 :: file2 :: _ -> 
             failwithf "multiple project files found, e.g. %s and %s" file1 file2 
-
-    let editDirAndFile (fileName: string) =
-        assert useEditFiles
-        let infoDir = Path.Combine(Path.GetDirectoryName fileName,".fsharp")
-        let editFile = Path.Combine(infoDir,Path.GetFileName fileName + ".edit")
-        if not (Directory.Exists infoDir) then 
-            Directory.CreateDirectory infoDir |> ignore
-        infoDir, editFile
-
-    let readFile (fileName: string) = 
-        if useEditFiles && watch then 
-            let infoDir, editFile = editDirAndFile fileName
-            let preferEditFile =
-                try 
-                    Directory.Exists infoDir && File.Exists editFile && File.Exists fileName && File.GetLastWriteTime(editFile) > File.GetLastWriteTime(fileName)
-                with _ -> 
-                    false
-            if preferEditFile then 
-                printfn "*** preferring %s to %s ***" editFile fileName
-                File.ReadAllText editFile
-            else
-                File.ReadAllText fileName
-        else
-            File.ReadAllText fileName
 
     let options = 
         match fsproj with 
@@ -234,6 +239,18 @@ let ProcessCommandLine (argv: string[]) =
         let json = Newtonsoft.Json.JsonConvert.SerializeObject(data)
         json
 
+    let emitInfoFile (sourceFile: string) lines = 
+        let infoDir = Path.Combine(Path.GetDirectoryName(sourceFile), ".fsharp")
+        let infoFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info")
+        let lockFile = Path.Combine(infoDir, Path.GetFileName(sourceFile) + ".info.lock")
+        printfn "writing info file %s..." infoFile 
+        if not (Directory.Exists infoDir) then
+           Directory.CreateDirectory infoDir |> ignore
+        try 
+            File.WriteAllLines(infoFile, lines, encoding=Encoding.Unicode)
+        finally
+            try if Directory.Exists infoDir && File.Exists lockFile then File.Delete lockFile with _ -> ()
+
     let sendToWebHook (hook: string) fileContents = 
         try 
             let json = jsonFiles (Array.ofList fileContents)
@@ -266,13 +283,23 @@ let ProcessCommandLine (argv: string[]) =
 
             if not dump && webhook.IsNone then 
                 printfn "fslive: EVALUATING ALL INPUTS...." 
-                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, writeinfo, keepRanges, livecheck, tolerateIncompleteExpressions)
                 let fileConvContents = 
                     [| for i in implFiles -> 
                          let code = { Code = Convert(keepRanges, tolerateIncompleteExpressions).ConvertDecls i.Declarations }
                          i.FileName, code |]
 
-                match evaluator.EvaluateDecls fileConvContents with
+                let evaluator = LiveCheckEvaluation(options.OtherOptions, dyntypes, livecheck=livecheck, collectTooltips=false)
+                let results = evaluator.EvaluateDecls fileConvContents 
+                let mutable res = Ok()
+                for (sourceFile, diags, formattedTooltips) in results do   
+                    let info = [| |]
+                    for diag in diags do
+                        printfn "%s" (diag.ToString())
+                    if diags |> Array.exists (fun diag -> diag.Severity >= 2) then res <- Error ()
+
+                    printfn "...evaluated decls" 
+                    emitInfoFile sourceFile info
+                match res with
                 | Error _ when not watch -> exit 1
                 | _ -> ()
 
@@ -320,9 +347,7 @@ let ProcessCommandLine (argv: string[]) =
 
         let watchers = 
             [ for sourceFile in options.SourceFiles do
-                yield mkWatcher sourceFile
-                if useEditFiles then 
-                    yield mkWatcher sourceFile ]
+                yield mkWatcher sourceFile ]
 
         for watcher in watchers do
             watcher.EnableRaisingEvents <- true

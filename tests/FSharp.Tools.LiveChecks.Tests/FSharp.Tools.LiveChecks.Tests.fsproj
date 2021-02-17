@@ -1,0 +1,30 @@
+﻿<Project>
+     <!-- See https://stackoverflow.com/questions/43921992/how-can-i-use-beforebuild-and-afterbuild-targets-with-visual-studio-2017 -->
+    <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+    <PropertyGroup>
+        <TargetFramework>net5.0</TargetFramework>
+        <OutputType>Library</OutputType>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Include="LiveCheckTests.fs" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\..\FSharp.Tools.LiveChecks\FSharp.Tools.LiveChecks.fsproj" />
+        <ProjectReference Include="..\..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.8.3" />
+        <PackageReference Include="FsUnit" Version="3.4.0" />
+        <PackageReference Include="NUnit3TestAdapter" Version="3.17.0" />
+        <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
+    </ItemGroup>
+  <ItemGroup>
+    <ExeToolFiles Include="..\..\fslive\bin\$(Configuration)\net5.0\**\*.*" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- For testing purposes we place the fslive EXE in well-known locations with respect to the analyzer DLL -->
+  <Target Name="AfterBuild">
+    <Copy SourceFiles="@(ExeToolFiles)" DestinationFiles="@(ExeToolFiles->'bin\fslive\net5.0\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+</Project>

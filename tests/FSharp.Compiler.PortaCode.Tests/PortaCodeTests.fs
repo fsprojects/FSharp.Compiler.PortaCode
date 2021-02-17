@@ -1,4 +1,4 @@
-module FSharp.Compiler.PortaCode.Tests.Basic
+module Tests.CodeModelInterpreter
 
 open System
 open System.IO
@@ -18,7 +18,7 @@ module TestCode
 
         let args = 
             [| yield "--once"; 
-               if livecheck then yield "--livecheck"; 
+               if livecheck then yield "--enablelivechecks"; 
                if dyntypes then yield "--dyntypes"; 
                yield name + ".fsx" 
                |]
