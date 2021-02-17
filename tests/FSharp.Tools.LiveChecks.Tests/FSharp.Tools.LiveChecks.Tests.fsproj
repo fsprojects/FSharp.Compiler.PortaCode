@@ -5,27 +5,17 @@
         <TargetFramework>net5.0</TargetFramework>
         <OutputType>Library</OutputType>
         <IsPackable>false</IsPackable>
-        <DefineConstants>$(DefineConstants);NETSTANDARD2_0;TEST</DefineConstants>
     </PropertyGroup>
-    <ItemGroup>
-      <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
-    </ItemGroup>
     <ItemGroup>
         <Compile Include="LiveCheckTests.fs" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\FSharp.Tools.LiveChecks\FSharp.Tools.LiveChecks.fsproj" />
         <ProjectReference Include="..\..\FSharp.Compiler.PortaCode\FSharp.Compiler.PortaCode.fsproj" />
-        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="15.7.0" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.8.3" />
         <PackageReference Include="FsUnit" Version="3.4.0" />
-        <PackageReference Include="NUnit3TestAdapter" Version="3.11.2" />
-      
-        <!-- References used indirectly by FCS when compiling tests -->
+        <PackageReference Include="NUnit3TestAdapter" Version="3.17.0" />
         <PackageReference Update="FSharp.Core" Version="5.0.1-dev" />
-        <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
-        <PackageReference Include="NETStandard.Library" Version="2.0.3" />
-        <PackageReference Include="System.Reflection.Emit.ILGeneration" Version="4.3.0" />
-        <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.3.0" />
     </ItemGroup>
   <ItemGroup>
     <ExeToolFiles Include="..\..\fslive\bin\$(Configuration)\net5.0\**\*.*" />

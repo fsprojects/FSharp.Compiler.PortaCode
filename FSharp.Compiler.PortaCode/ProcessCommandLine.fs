@@ -4,6 +4,8 @@
 
 module FSharp.Compiler.PortaCode.ProcessCommandLine
 
+#nowarn "44"
+
 open FSharp.Compiler.PortaCode.CodeModel
 open FSharp.Compiler.PortaCode.Interpreter
 open FSharp.Compiler.PortaCode.FromCompilerService
@@ -104,7 +106,13 @@ let ProcessCommandLine (argv: string[]) =
                 //printfn $"fslive: req.OtherOptions = %A{req.OtherOptions}"
                 let evaluator = LiveCheckEvaluation(req.OtherOptions, dyntypes=true, collectTooltips=true, livecheck=true)
                 let results = evaluator.EvaluateDecls req.Files
-                let resp = { FileResults = [| for (f,diags,tt) in results -> {File=f;Diagnostics=diags;Tooltips=tt} |]}
+                let resp =
+                    { FileResults = 
+                         [| for (f,diags,tt) in results -> 
+                             { File=f
+                               Diagnostics=diags
+                               Tooltips= tt } |] }
+
                 printfn "fslive: %d diagnostics and %d tooltips" (resp.FileResults |> Array.sumBy (fun f -> f.Diagnostics.Length)) (resp.FileResults |> Array.sumBy (fun f -> f.Tooltips.Length))
                 for f in resp.FileResults do
                     for d in f.Diagnostics do

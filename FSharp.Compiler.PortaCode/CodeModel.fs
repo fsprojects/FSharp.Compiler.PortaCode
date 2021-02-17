@@ -196,6 +196,16 @@ type DDecl =
 type DFile = 
     { Code: DDecl[] }
 
+type LiveCheckResultTaggedText =
+    { Text: string
+      NavigateToFile: DRange option
+      NavigateToLink: string option
+      Tag: string }
+
+type LiveCheckResultTooltip =
+    { Location: DRange
+      Lines: LiveCheckResultTaggedText[][] }
+
 type LiveCheckRequest =
     { OtherOptions: string[]
       Files: (string * DFile)[]  }
@@ -203,7 +213,7 @@ type LiveCheckRequest =
 type LiveCheckFileResult =
     { File: string
       Diagnostics: DDiagnostic[]
-      Tooltips: (DRange * string list)[] }
+      Tooltips: LiveCheckResultTooltip[] }
 
 type LiveCheckResponse = 
     { FileResults: LiveCheckFileResult[] }

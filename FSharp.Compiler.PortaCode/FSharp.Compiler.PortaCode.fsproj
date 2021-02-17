@@ -11,6 +11,8 @@
         <Compile Include="Interpreter.fs" />
         <Compile Include="FromCompilerService.fs" />
         <Compile Include="LiveCheckEvaluation.fs" />
+        <Compile Include="ProjectCracker.fs" />
+        <Compile Include="ProcessCommandLine.fs" />
     </ItemGroup>
     <ItemGroup>
         <PackageReference Include="FSharp.Compiler.Service" Version="39.0.0-dev" />

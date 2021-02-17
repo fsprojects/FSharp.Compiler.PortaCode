@@ -10,6 +10,17 @@ open System.Collections.Generic
 open System.IO
 open System.Text
 
+type RunChecksReturnType =
+    ((int (* severity *) * 
+      int (* number *) * 
+      (string * int * int * int * int)[] * (* stack locations *)
+      (* message *) string)[])
+
+type CollectedTooltip =
+    { Range: DRange
+      Observations: (string * obj) list 
+      Prefer: bool }
+
 type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck) =
 
     let mutable assemblyNameId = 0
@@ -90,16 +101,23 @@ type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck
 
     let MAXTOOLTIP = 100
 
-    let formatTooltips tooltips =
+    let formatTooltips (tooltips: CollectedTooltip[]) : LiveCheckResultTooltip[]  =
         let ranges =  HashSet<DRange>(HashIdentity.Structural)
-        let havePreferred = tooltips |> Array.choose (fun (m,_,prefer) -> if prefer then Some m else None) |> Set.ofArray
-        [| for (range, lines, prefer)  in tooltips do
-            if not (ranges.Contains(range))  && (prefer || not (havePreferred.Contains range)) then 
+        
+        // The set of ranges that have preferred tooltips
+        let havePreferred =
+            tooltips
+            |> Array.choose (fun tt -> if tt.Prefer then Some tt.Range else None)
+            |> Set.ofArray
+
+        [| for tt  in tooltips do
+            let range = tt.Range
+            if not (ranges.Contains(range))  && (tt.Prefer || not (havePreferred.Contains range)) then 
                 ranges.Add(range) |> ignore
 
-                // Format multiple lines of text into a single line in the output file
+                // Format multiple value observations 
                 let valuesText = 
-                    [ for (action, value) in lines do 
+                    [| for (action, value) in tt.Observations do 
                           let action = (if action = "" then "" else action + " ")
                           let valueText = try formatValue value with e -> sprintf "??? (%s)" e.Message
                           let valueText = valueText.Replace("\n", "\\n").Replace("\r", "").Replace("\t", "")
@@ -108,10 +126,12 @@ type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck
                                   valueText.[0 .. MAXTOOLTIP-1] + "..."
                               else   
                                   valueText
-                          yield action + valueText ]
+                          [| { Text = "Shape: " + action + valueText
+                               Tag = "text"
+                               NavigateToFile = None
+                               NavigateToLink = Some "https://www.google.com" } |] |]
 
-                let line = range, valuesText
-                yield line |]
+                yield { Location=range; Lines=valuesText }|]
 
     let findLiveCheckAttr (attrs: obj[]) =
           attrs |> Array.tryFind (fun a ->  a.GetType().Name.Contains "CheckAttribute")
@@ -208,7 +228,7 @@ type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck
             | true, res -> res
             | _ -> Reflection.Assembly.Load(nm)
                                         
-        let tooltips = ResizeArray()
+        let tooltips = ResizeArray<CollectedTooltip>()
         let sink =
             if collectTooltips then 
                 { new Sink with 
@@ -239,35 +259,40 @@ type LiveCheckEvaluation(options: string[], dyntypes, collectTooltips, livecheck
                          | Choice1Of2 _ -> ()
                          | Choice2Of2 mdef -> 
                              mdef.Range |> Option.iter (fun r -> 
-                                 tooltips.Add(r, lines, true))
+                                 tooltips.Add { Range=r; Observations= lines; Prefer=true })
                          match mref with 
                          | None -> ()
                          | Some mref-> 
                              callerRange |> Option.iter (fun r -> 
-                                 tooltips.Add(r, lines, true))
+                                 tooltips.Add { Range=r; Observations= lines; Prefer=true })
 
                      member __.NotifyBindValue(vdef, value) = 
                          printfn "%A: vdef.Name = %s, vdef.IsCompilerGenerated = %b" vdef.Range vdef.Name vdef.IsCompilerGenerated
                          if not vdef.IsCompilerGenerated then 
-                             vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                             vdef.Range |> Option.iter (fun r -> 
+                                 tooltips.Add { Range=r; Observations=[("", value.Value)]; Prefer=false })
 
                      member __.NotifySetField(typ, fdef, value) = 
                          // Class fields for implicit constructors are reported as 'compiler generated'
                          //if not fdef.IsCompilerGenerated then 
-                         fdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                         fdef.Range |> Option.iter (fun r ->
+                             tooltips.Add { Range=r; Observations=[("", value.Value)]; Prefer=false })
 
                      member __.NotifyGetField(typ, fdef, m, value) = 
                          // Class fields for implicit constructors are reported as 'compiler generated'
                          //if not fdef.IsCompilerGenerated then 
-                         m |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                         m |> Option.iter (fun r ->
+                             tooltips.Add { Range=r; Observations=[("", value.Value)]; Prefer=false })
 
                      member __.NotifyBindLocal(vdef, value) = 
                          if not vdef.IsCompilerGenerated then 
-                             vdef.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                             vdef.Range |> Option.iter (fun r ->
+                                 tooltips.Add { Range=r; Observations=[("", value.Value)]; Prefer=false })
 
                      member __.NotifyUseLocal(vref, value) = 
                          if not vref.IsCompilerGenerated then 
-                             vref.Range |> Option.iter (fun r -> tooltips.Add ((r, [("", value.Value)], false)))
+                             vref.Range |> Option.iter (fun r ->
+                                 tooltips.Add { Range=r; Observations=[("", value.Value)]; Prefer=false })
                 }
                 |> Some
             else  

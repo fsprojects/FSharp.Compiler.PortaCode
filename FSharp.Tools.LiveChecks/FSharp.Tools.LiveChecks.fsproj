@@ -7,10 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="C:\Users\Administrator\.nuget\packages\fsharp.core\5.0.1-dev\contentFiles\any\netstandard2.0\FSharp.Core.xml" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Compile Include="Analyzer.fs" />
     
     <!-- lay down the analyzer DLL in the tools/fsharp41 directory of the package, i.e. a compiler tool -->

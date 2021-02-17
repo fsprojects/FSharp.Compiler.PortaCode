@@ -34,7 +34,7 @@ let AnalyzerSmokeTest () =
         if actualExtraDiagnostics <> expectedExtraDiagnostics then 
             failwith $"%A{actualExtraDiagnostics} <> %A{expectedExtraDiagnostics}"
 
-        let actualExtraTooltips = [ for (_m, msgs) in toolTips do yield! msgs ]
+        let actualExtraTooltips = [ for toolTip in toolTips do for line in toolTip.Lines do for tt in line do yield tt.Text  ]
 
         // Check that the LiveCheck execution collects tooltips about two values
         if actualExtraTooltips |> List.contains "123456" |> not then failwithf "%A" actualExtraTooltips

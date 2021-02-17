@@ -28,6 +28,9 @@ type LiveCheckAnalyzer(ctxt) =
     do printfn "FsLive.Tools.LiveCheckAnalyzer: creating LiveCheckAnalyzer"
 
     let mutable savedTooltips = [| |]
+    static let toRange (m: DRange) =
+        Range.mkRange m.File (Position.mkPos m.StartLine m.StartColumn) (Position.mkPos m.EndLine m.EndColumn)
+
     static let p =
       lazy
         let path = Path.Combine(Path.GetDirectoryName(typeof<LiveCheckAnalyzer>.Assembly.Location), "../../fslive/net5.0/fslive.dll")
@@ -78,25 +81,43 @@ type LiveCheckAnalyzer(ctxt) =
             finally 
                 System.AppDomain.CurrentDomain.remove_AssemblyResolve handler
 
-        let toolTipsToSave = (Array.tryLast resp.FileResults) |> function None -> [| |] | Some r -> r.Tooltips
+        let toolTipsToSave =
+            resp.FileResults
+            |> Array.tryLast 
+            |> function 
+                | None -> [| |]
+                | Some r -> r.Tooltips
+
         let diags = 
             [| for d in ((Array.tryLast resp.FileResults) |> function None -> [| |] | Some r -> r.Diagnostics) do 
                 let sev = match d.Severity with 2 -> FSharpDiagnosticSeverity.Error | _ -> FSharpDiagnosticSeverity.Warning
-                let m = Range.mkRange d.Location.File (Position.mkPos d.Location.StartLine d.Location.StartColumn) (Position.mkPos d.Location.EndLine d.Location.EndColumn)
+                let m = toRange d.Location
                 yield FSharpDiagnostic.Create(sev, d.Message, d.Number, m) |]
+
         diags, toolTipsToSave
         
-    static member TryAdditionalToolTipImpl(savedTooltips: (DRange * string list)[], fileName, pos: Position) =
-        [| for (m, lines) in savedTooltips do
+    static member TryAdditionalToolTipImpl(savedTooltips: LiveCheckResultTooltip[], fileName, pos: Position) =
+        [| for savedTooltip in savedTooltips do
+            let m = savedTooltip.Location
             if m.File = fileName && 
                 m.StartLine <= pos.Line && pos.Line <= m.EndLine &&
                 (pos.Line <> m.StartLine || m.StartColumn <= pos.Column) && 
                 (pos.Line <> m.EndLine|| pos.Column <= m.EndColumn) then
-                for line in lines do
-                    yield TaggedText.tagText line |]
+                for line in savedTooltip.Lines do
+                    for part in line do
+                       let tt = 
+                           match part.Text with
+                           | (* "text" *) _ -> TaggedText.tagText part.Text
+                       match part.NavigateToFile with
+                       | Some m2 -> NavigableTaggedText(tt, toRange m2) :> TaggedText
+                       | _ -> 
+                       match part.NavigateToLink with
+                       | Some url -> WebLinkTaggedText(tt, System.Uri(url)) :> TaggedText
+                       | _ -> 
+                       tt
+                       |]
 
     override _.OnCheckFile(fileCtxt) =
-       
         let diags, toolTipsToSave = LiveCheckAnalyzer.OnCheckFileImpl(fileCtxt.CheckerModel)
         savedTooltips <- toolTipsToSave
         diags
