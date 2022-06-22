@@ -14,7 +14,7 @@
     <ItemGroup>
         <PackageReference Update="FSharp.Core" Version="5.0.0" />
         <PackageReference Include="Microsoft.Build.Utilities.Core" Version="16.8.0" />
-        <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
         <PackageReference Include="FSharp.Compiler.Service" Version="38.0.0" />
         <PackageReference Include="Dotnet.ProjInfo" Version="0.44.0" />
     </ItemGroup>
